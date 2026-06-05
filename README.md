@@ -129,9 +129,13 @@ Locally, `npm run sync` runs the same logic via `scripts/sync.ts`.
    - `AUTH_URL` — your public Railway URL (e.g. `https://pickems-app-production.up.railway.app`)
    - `CRON_SECRET` — `openssl rand -base64 32`
    - `HLTV_EVENT_ID` — the Major's HLTV event ID (e.g. `7148`)
-5. Build/start commands (Railway auto-detects Next.js, but explicit is fine):
-   - **Build**: `npx prisma db push && npm run build`
-   - **Start**: `npm start`
+5. Build/start commands (already wired via `railway.json`):
+   - **Build**: `npm install --no-audit --no-fund && npm run build`
+   - **Start**: `npm run start:railway` (runs `prisma db push --accept-data-loss && next start`)
+
+   The schema push happens at **start** rather than build, because Railway only
+   injects plugin env vars (like `DATABASE_URL`) at runtime — they're not
+   available during the Nixpacks build phase.
 6. **Scheduled sync** — Railway doesn't run `vercel.json` crons. Two options:
    - **Cron service (recommended)**: in your Railway project, add a second
      service from the same repo. Set its start command to

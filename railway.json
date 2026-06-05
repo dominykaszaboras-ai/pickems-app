@@ -2,10 +2,10 @@
   "$schema": "https://railway.app/railway.schema.json",
   "build": {
     "builder": "NIXPACKS",
-    "buildCommand": "npm install --no-audit --no-fund && npm run deploy:railway"
+    "buildCommand": "npm install --no-audit --no-fund && npm run build"
   },
   "deploy": {
-    "startCommand": "npm start",
+    "startCommand": "npm run start:railway",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 5
   }

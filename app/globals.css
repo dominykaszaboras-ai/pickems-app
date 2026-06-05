@@ -1,0 +1,14 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html, body {
+  background: theme(colors.ink);
+  color: theme(colors.text);
+}
+
+* { box-sizing: border-box; }

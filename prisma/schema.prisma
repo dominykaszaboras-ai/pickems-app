@@ -1,0 +1,172 @@
+// Prisma schema for the CS2 Major Pickems app.
+// PostgreSQL (Railway / Vercel / Neon / Supabase / local docker).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --- NextAuth models ---------------------------------------------------------
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  passwordHash  String?
+  accounts      Account[]
+  sessions      Session[]
+  pickems       Pickem[]
+  createdAt     DateTime  @default(now())
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// --- Tournament domain -------------------------------------------------------
+model Tournament {
+  id            String   @id @default(cuid())
+  hltvEventId   Int      @unique
+  name          String
+  slug          String   @unique
+  startDate     DateTime?
+  endDate       DateTime?
+  // JSON snapshot of HLTV event meta (location, prize, etc.)
+  meta          String?
+  stages        Stage[]
+  teams         TournamentTeam[]
+  pickems       Pickem[]
+  lastSyncedAt  DateTime?
+}
+
+model Team {
+  id           String           @id @default(cuid())
+  hltvId       Int              @unique
+  name         String
+  logo         String?
+  tournaments  TournamentTeam[]
+  matchesA     Match[]          @relation("matchTeamA")
+  matchesB     Match[]          @relation("matchTeamB")
+}
+
+// Many-to-many between Tournament and Team (a team can appear in many majors)
+model TournamentTeam {
+  id           String     @id @default(cuid())
+  tournamentId String
+  teamId       String
+  seed         Int?
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  team         Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([tournamentId, teamId])
+}
+
+// StageKind values: "CHALLENGERS" | "LEGENDS" | "CHAMPIONS".
+// We keep `kind` as a String (not a Prisma enum) so the same schema works
+// across SQLite/Postgres without migrations on the enum type.
+
+model Stage {
+  id           String     @id @default(cuid())
+  tournamentId String
+  kind         String     // CHALLENGERS | LEGENDS | CHAMPIONS
+  name         String
+  // Swiss-only: the position within the stage (1..n)
+  ordinal      Int        @default(0)
+  matches      Match[]
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+
+  @@unique([tournamentId, kind])
+}
+
+model Match {
+  id           String   @id @default(cuid())
+  hltvId       Int?     @unique
+  stageId      String
+  // Swiss round (1..5) for swiss stages; for playoffs, use bracketRound (QF=1, SF=2, F=3, GF=4)
+  swissRound   Int?
+  bracketRound Int?
+  bracketSlot  Int?     // position within the round for the playoff bracket layout
+  teamAId      String?
+  teamBId      String?
+  scoreA       Int      @default(0)
+  scoreB       Int      @default(0)
+  bestOf       Int      @default(1)
+  // PENDING | LIVE | FINISHED
+  status       String   @default("PENDING")
+  startTime    DateTime?
+  winnerId     String?
+  // For Swiss matches: did this match decide a 3-0 (elimination=false, qualified=true) or 0-3 ?
+  swissContext String?  // e.g. "QUALIFY_3_0", "ELIM_0_3", "DECIDER", "INITIAL"
+  stage        Stage    @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  teamA        Team?    @relation("matchTeamA", fields: [teamAId], references: [id])
+  teamB        Team?    @relation("matchTeamB", fields: [teamBId], references: [id])
+}
+
+// --- Pickems -----------------------------------------------------------------
+model Pickem {
+  id           String        @id @default(cuid())
+  userId       String
+  tournamentId String
+  // Locked once the relevant stage starts; we store but verify server-side too.
+  lockedAt     DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  picks        PickemPick[]
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tournament   Tournament    @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, tournamentId])
+}
+
+// PickKind:
+//  - SWISS_3_0       (Challengers or Legends; teamId = team picked to go 3-0)
+//  - SWISS_0_3       (teamId = team picked to go 0-3)
+//  - SWISS_ADVANCE   (teamId = team picked to qualify with 3-x, not 3-0)
+//  - PLAYOFF_WINNER  (teamId = team picked to win that bracket slot; meta = round/slot)
+model PickemPick {
+  id          String  @id @default(cuid())
+  pickemId    String
+  kind        String
+  stageKind   String  // CHALLENGERS | LEGENDS | CHAMPIONS
+  teamId      String
+  // For PLAYOFF_WINNER: which round (1=QF,2=SF,3=F,4=Champion)
+  round       Int?
+  pickem      Pickem  @relation(fields: [pickemId], references: [id], onDelete: Cascade)
+
+  @@index([pickemId])
+}

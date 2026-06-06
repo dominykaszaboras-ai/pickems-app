@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useSession, signOut } from "next-auth/react";
+import { RefreshButton } from "./RefreshButton";
 
 export function Nav() {
   const { data: session } = useSession();
@@ -17,6 +18,7 @@ export function Nav() {
         </div>
         {session?.user ? (
           <div className="flex items-center gap-3 text-sm">
+            <RefreshButton />
             <span className="text-muted">{session.user.name ?? session.user.email}</span>
             <button onClick={() => signOut()} className="text-muted hover:text-text">Sign out</button>
           </div>

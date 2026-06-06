@@ -39,4 +39,5 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           HLTV_EVENT_ID: ${{ secrets.HLTV_EVENT_ID }}
+          HLTV_STAGE_EVENTS: ${{ secrets.HLTV_STAGE_EVENTS }}
         run: npm run sync

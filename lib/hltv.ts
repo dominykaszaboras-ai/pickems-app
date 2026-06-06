@@ -83,6 +83,36 @@ export async function fetchEventSnapshot(eventId: number): Promise<HltvEventSnap
   };
 }
 
+// Fetch *just* the matches (upcoming + results) for a stage-specific event ID,
+// forcing every returned HltvMatch's stageKind to the kind you pass.
+//
+// Cologne 2026 splits each Major stage into its own HLTV event:
+//   8301 - umbrella       (teams, dates, name)
+//   9028 - Stage 1        (results)
+//   9029 - Stage 2        (live + results)
+//   ...
+export async function fetchStageMatches(
+  stageEventId: number,
+  stageKind: StageKind,
+): Promise<HltvMatch[]> {
+  const upcoming = await safe(() => HLTV.getMatches() as Promise<any[]>, [] as any[]);
+  const upcomingForStage = (upcoming ?? [])
+    .filter((m: any) => Number(m?.event?.id) === stageEventId)
+    .map(normalizeMatch);
+
+  const results = await safe(
+    () => HLTV.getResults({ eventIds: [stageEventId] } as any) as Promise<any[]>,
+    [] as any[],
+  );
+  const resultMatches: HltvMatch[] = (results ?? []).map(normalizeResult);
+
+  // Force the stage kind — HLTV's labels are unreliable enough that we trust
+  // the event-id-to-stage mapping the caller passed in.
+  const all = [...resultMatches, ...upcomingForStage];
+  for (const m of all) m.stageKind = stageKind;
+  return all;
+}
+
 // --- Internals ---------------------------------------------------------------
 
 function parseDate(d: unknown): Date | null {

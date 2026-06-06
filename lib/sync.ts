@@ -1,9 +1,33 @@
 // Pull the HLTV event snapshot and persist it into our DB.
 // Idempotent: safe to call repeatedly.
+//
+// In Cologne 2026 each Major stage is a separate HLTV event:
+//   - `umbrellaEventId` (e.g. 8301) gives us the team list + tournament name
+//   - `stageEvents` maps each StageKind to its own HLTV event id
+//     (e.g. STAGE_1 -> 9028, STAGE_2 -> 9029) and we pull matches from there
+//
+// The HLTV_STAGE_EVENTS env var encodes the mapping, e.g.
+//   HLTV_STAGE_EVENTS="STAGE_1:9028,STAGE_2:9029,STAGE_3:9030,PLAYOFFS:9031"
 
 import { prisma } from "./db";
-import { fetchEventSnapshot, type HltvMatch } from "./hltv";
+import { fetchEventSnapshot, fetchStageMatches } from "./hltv";
 import type { StageKind } from "./types";
+
+export type StageEventMap = Partial<Record<StageKind, number>>;
+
+export function parseStageEvents(raw: string | undefined): StageEventMap {
+  if (!raw) return {};
+  const out: StageEventMap = {};
+  for (const segment of raw.split(",")) {
+    const [k, v] = segment.split(":").map((s) => s.trim());
+    const id = Number(v);
+    if (!k || !id) continue;
+    if (k === "STAGE_1" || k === "STAGE_2" || k === "STAGE_3" || k === "PLAYOFFS") {
+      out[k] = id;
+    }
+  }
+  return out;
+}
 
 const STAGE_NAMES: Record<StageKind, string> = {
   STAGE_1: "Stage 1 (Swiss)",
@@ -12,7 +36,10 @@ const STAGE_NAMES: Record<StageKind, string> = {
   PLAYOFFS: "Playoffs",
 };
 
-export async function syncTournament(hltvEventId: number) {
+export async function syncTournament(
+  hltvEventId: number,
+  stageEvents: StageEventMap = {},
+) {
   const snap = await fetchEventSnapshot(hltvEventId);
 
   // 1. Upsert tournament.
@@ -69,14 +96,26 @@ export async function syncTournament(hltvEventId: number) {
     stageIdByKind[kind] = stage.id;
   }
 
-  // 4. Upsert matches (results first, then upcoming, so finished state wins).
-  const all = [...snap.resultMatches, ...snap.upcomingMatches];
+  // 4a. Match list: prefer per-stage event IDs (Cologne-style), and fall back
+  // to whatever we got under the umbrella event for completeness.
+  const stageMatches = [] as Awaited<ReturnType<typeof fetchStageMatches>>;
+  for (const [kind, evId] of Object.entries(stageEvents) as Array<[StageKind, number]>) {
+    if (!evId) continue;
+    try {
+      const ms = await fetchStageMatches(evId, kind);
+      stageMatches.push(...ms);
+    } catch (e) {
+      console.warn(`[sync] stage ${kind} (event ${evId}) failed:`, (e as Error).message);
+    }
+  }
+  const all = [...snap.resultMatches, ...snap.upcomingMatches, ...stageMatches];
+
+  // 4b. Upsert (results first, finished state wins).
   for (const m of all) {
     if (!m.hltvId) continue;
-    const stageKind = m.stageKind ?? guessStageFromTeamCount(m, all);
-    if (!stageKind) continue; // ignore matches we can't classify
+    const stageKind = m.stageKind;
+    if (!stageKind) continue; // umbrella-pulled matches without a stage hint are ignored
 
-    // Map team HLTV ids -> our team rows (creating placeholders if missing).
     const teamAId = await ensureTeam(m.teamAHltvId, m.teamAName, teamIdByHltv);
     const teamBId = await ensureTeam(m.teamBHltvId, m.teamBName, teamIdByHltv);
     const winnerId =
@@ -116,7 +155,13 @@ export async function syncTournament(hltvEventId: number) {
     });
   }
 
-  return { tournamentId: tournament.id, name: tournament.name, slug: tournament.slug };
+  return {
+    tournamentId: tournament.id,
+    name: tournament.name,
+    slug: tournament.slug,
+    matchesPulled: all.length,
+    stages: Object.keys(stageEvents),
+  };
 }
 
 async function ensureTeam(
@@ -134,11 +179,6 @@ async function ensureTeam(
   });
   cache.set(hltvId, team.id);
   return team.id;
-}
-
-function guessStageFromTeamCount(_m: HltvMatch, _all: HltvMatch[]): StageKind | null {
-  // We could add cleverer inference here. For now, give up.
-  return null;
 }
 
 function slugify(s: string): string {

@@ -2,7 +2,7 @@
 // Protected by CRON_SECRET (Vercel automatically attaches Authorization: Bearer $CRON_SECRET).
 
 import { NextRequest, NextResponse } from "next/server";
-import { syncTournament } from "@/lib/sync";
+import { parseStageEvents, syncTournament } from "@/lib/sync";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,8 +17,10 @@ export async function GET(req: NextRequest) {
   const eventId = Number(process.env.HLTV_EVENT_ID ?? 0);
   if (!eventId) return NextResponse.json({ error: "HLTV_EVENT_ID not set" }, { status: 400 });
 
+  const stageEvents = parseStageEvents(process.env.HLTV_STAGE_EVENTS);
+
   try {
-    const result = await syncTournament(eventId);
+    const result = await syncTournament(eventId, stageEvents);
     return NextResponse.json({ ok: true, ...result, syncedAt: new Date().toISOString() });
   } catch (e) {
     console.error("[sync] failed:", e);

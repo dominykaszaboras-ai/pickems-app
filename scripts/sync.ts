@@ -4,7 +4,7 @@
 import { loadEnvConfig } from "@next/env";
 loadEnvConfig(process.cwd()); // reads .env, .env.local, etc — same as Next.
 
-import { syncTournament } from "../lib/sync";
+import { parseStageEvents, syncTournament } from "../lib/sync";
 
 const eventId = Number(process.env.HLTV_EVENT_ID ?? 0);
 if (!eventId) {
@@ -12,7 +12,12 @@ if (!eventId) {
   process.exit(1);
 }
 
-syncTournament(eventId)
+const stageEvents = parseStageEvents(process.env.HLTV_STAGE_EVENTS);
+if (Object.keys(stageEvents).length > 0) {
+  console.log("[sync] stage event mapping:", stageEvents);
+}
+
+syncTournament(eventId, stageEvents)
   .then((r) => {
     console.log("[sync] done", r);
     process.exit(0);

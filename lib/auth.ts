@@ -1,14 +1,16 @@
 // NextAuth v5 (Auth.js) configuration.
 // Exposes: auth, handlers, signIn, signOut.
 
-import NextAuth from "next-auth";
+import NextAuth, { type NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import GitHub from "next-auth/providers/github";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import bcrypt from "bcryptjs";
 import { prisma } from "./db";
 
-const providers = [
+// Explicit type annotation prevents TS from narrowing the array to
+// `CredentialsConfig[]` (which then rejects pushing the OAuth GitHub provider).
+const providers: NextAuthConfig["providers"] = [
   Credentials({
     name: "Email & password",
     credentials: {

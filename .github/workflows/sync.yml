@@ -1,0 +1,42 @@
+name: HLTV sync
+
+# Why GitHub Actions and not Railway cron?
+# HLTV is behind Cloudflare and blocks Railway's datacenter IPs
+# (returns "Access denied | www.hltv.org used Cloudflare to restrict access").
+# GitHub-hosted runners use Azure IPs that the `hltv` + got-scraping combo
+# typically gets through. We write straight into the production Postgres via
+# the public TCP proxy URL (stored as DATABASE_URL secret).
+
+on:
+  schedule:
+    # Every 10 minutes. GitHub Actions cron is best-effort, sometimes
+    # delayed during high-load periods — fine for our use case.
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    # Lets you trigger a sync on demand from the Actions tab.
+
+# Prevent overlapping runs if a previous sync is still going.
+concurrency:
+  group: hltv-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install deps
+        run: npm install --no-audit --no-fund
+
+      - name: Run sync
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          HLTV_EVENT_ID: ${{ secrets.HLTV_EVENT_ID }}
+        run: npm run sync

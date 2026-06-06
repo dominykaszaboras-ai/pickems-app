@@ -11,12 +11,14 @@ import type {
 import { TeamLogo } from "./TeamLogo";
 
 type SwissPicks = {
-  three_oh: string | null;
-  zero_three: string | null;
-  advance: string[]; // 7 teams
+  three_oh: string[];   // up to PERFECT_COUNT teams
+  zero_three: string[]; // up to PERFECT_COUNT teams
+  advance: string[];    // up to ADVANCE_COUNT teams (each goes 3-1 or 3-2)
 };
 
-const ADVANCE_COUNT = 7;
+// 2025/26 Valve format: 2 picks for 3-0, 2 picks for 0-3, 6 picks for 3-x advance.
+const PERFECT_COUNT = 2;
+const ADVANCE_COUNT = 6;
 
 export function PickemsForm({
   tournament,
@@ -33,8 +35,8 @@ export function PickemsForm({
   function pickedOf(stage: StageKind): SwissPicks {
     const inStage = (initial?.picks ?? []).filter((p) => p.stageKind === stage);
     return {
-      three_oh: inStage.find((p) => p.kind === "SWISS_3_0")?.teamId ?? null,
-      zero_three: inStage.find((p) => p.kind === "SWISS_0_3")?.teamId ?? null,
+      three_oh: inStage.filter((p) => p.kind === "SWISS_3_0").map((p) => p.teamId),
+      zero_three: inStage.filter((p) => p.kind === "SWISS_0_3").map((p) => p.teamId),
       advance: inStage.filter((p) => p.kind === "SWISS_ADVANCE").map((p) => p.teamId),
     };
   }
@@ -58,8 +60,8 @@ export function PickemsForm({
       ["CHALLENGERS", challengers] as const,
       ["LEGENDS", legends] as const,
     ]) {
-      if (sp.three_oh) out.push({ kind: "SWISS_3_0", stageKind, teamId: sp.three_oh, round: null });
-      if (sp.zero_three) out.push({ kind: "SWISS_0_3", stageKind, teamId: sp.zero_three, round: null });
+      for (const t of sp.three_oh) out.push({ kind: "SWISS_3_0", stageKind, teamId: t, round: null });
+      for (const t of sp.zero_three) out.push({ kind: "SWISS_0_3", stageKind, teamId: t, round: null });
       for (const t of sp.advance) out.push({ kind: "SWISS_ADVANCE", stageKind, teamId: t, round: null });
     }
     for (const [round, teamId] of Object.entries(playoffs)) {
@@ -118,25 +120,38 @@ function SwissPicker({
   picks: SwissPicks;
   setPicks: (p: SwissPicks) => void;
 }) {
-  function toggleAdvance(id: string) {
-    const has = picks.advance.includes(id);
-    if (has) setPicks({ ...picks, advance: picks.advance.filter((x) => x !== id) });
-    else if (picks.advance.length < ADVANCE_COUNT) setPicks({ ...picks, advance: [...picks.advance, id] });
+  // Generic toggle that respects the per-slot cap.
+  function toggleIn(list: string[], id: string, cap: number): string[] {
+    if (list.includes(id)) return list.filter((x) => x !== id);
+    if (list.length >= cap) return list;
+    return [...list, id];
   }
 
   return (
     <section className="rounded-2xl border border-line bg-panel p-5">
       <h2 className="mb-1 text-lg font-semibold">{title}</h2>
       <p className="mb-4 text-sm text-muted">
-        Pick a <span className="text-accent">3-0</span> team, a{" "}
-        <span className="text-loss">0-3</span> team, and {ADVANCE_COUNT} more to qualify.
+        Pick <span className="text-accent">{PERFECT_COUNT}</span> teams to go 3-0,{" "}
+        <span className="text-loss">{PERFECT_COUNT}</span> teams to go 0-3, and{" "}
+        <span className="text-win">{ADVANCE_COUNT}</span> more to advance 3-1 or 3-2.
       </p>
+
+      <div className="mb-3 flex flex-wrap gap-3 text-xs text-muted">
+        <span>3-0: <span className="text-text">{picks.three_oh.length}/{PERFECT_COUNT}</span></span>
+        <span>0-3: <span className="text-text">{picks.zero_three.length}/{PERFECT_COUNT}</span></span>
+        <span>Advance: <span className="text-text">{picks.advance.length}/{ADVANCE_COUNT}</span></span>
+      </div>
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
         {teams.map((t) => {
-          const is30 = picks.three_oh === t.id;
-          const is03 = picks.zero_three === t.id;
+          const is30 = picks.three_oh.includes(t.id);
+          const is03 = picks.zero_three.includes(t.id);
           const isAdv = picks.advance.includes(t.id);
+          // 3-0 / 0-3 / ADV are mutually exclusive per team.
+          const used = is30 || is03 || isAdv;
+          const slot30Full = picks.three_oh.length >= PERFECT_COUNT && !is30;
+          const slot03Full = picks.zero_three.length >= PERFECT_COUNT && !is03;
+          const slotAdvFull = picks.advance.length >= ADVANCE_COUNT && !isAdv;
           return (
             <div
               key={t.id}
@@ -144,28 +159,43 @@ function SwissPicker({
                 "flex items-center gap-2 rounded-xl border bg-panel2 p-2",
                 is30 && "border-accent",
                 is03 && "border-loss",
-                isAdv && !is30 && !is03 && "border-win",
-                !is30 && !is03 && !isAdv && "border-line",
+                isAdv && "border-win",
+                !used && "border-line",
               )}
             >
               <TeamLogo team={t} size={24} />
               <span className="flex-1 truncate text-sm">{t.name}</span>
               <div className="flex gap-1 text-[10px]">
                 <button
-                  onClick={() => setPicks({ ...picks, three_oh: is30 ? null : t.id })}
-                  className={clsx("rounded px-1.5 py-0.5", is30 ? "bg-accent text-ink" : "bg-panel text-muted")}
+                  disabled={slot30Full || is03 || isAdv}
+                  onClick={() => setPicks({ ...picks, three_oh: toggleIn(picks.three_oh, t.id, PERFECT_COUNT) })}
+                  className={clsx(
+                    "rounded px-1.5 py-0.5",
+                    is30 ? "bg-accent text-ink" : "bg-panel text-muted",
+                    (slot30Full || is03 || isAdv) && "opacity-30",
+                  )}
                 >
                   3-0
                 </button>
                 <button
-                  onClick={() => setPicks({ ...picks, zero_three: is03 ? null : t.id })}
-                  className={clsx("rounded px-1.5 py-0.5", is03 ? "bg-loss text-ink" : "bg-panel text-muted")}
+                  disabled={slot03Full || is30 || isAdv}
+                  onClick={() => setPicks({ ...picks, zero_three: toggleIn(picks.zero_three, t.id, PERFECT_COUNT) })}
+                  className={clsx(
+                    "rounded px-1.5 py-0.5",
+                    is03 ? "bg-loss text-ink" : "bg-panel text-muted",
+                    (slot03Full || is30 || isAdv) && "opacity-30",
+                  )}
                 >
                   0-3
                 </button>
                 <button
-                  onClick={() => toggleAdvance(t.id)}
-                  className={clsx("rounded px-1.5 py-0.5", isAdv ? "bg-win text-ink" : "bg-panel text-muted")}
+                  disabled={slotAdvFull || is30 || is03}
+                  onClick={() => setPicks({ ...picks, advance: toggleIn(picks.advance, t.id, ADVANCE_COUNT) })}
+                  className={clsx(
+                    "rounded px-1.5 py-0.5",
+                    isAdv ? "bg-win text-ink" : "bg-panel text-muted",
+                    (slotAdvFull || is30 || is03) && "opacity-30",
+                  )}
                 >
                   ADV
                 </button>

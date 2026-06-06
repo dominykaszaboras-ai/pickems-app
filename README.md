@@ -94,10 +94,11 @@ Open the Major's page on hltv.org/events — the ID is in the URL, e.g.
 Standard Valve pickems format (`lib/scoring.ts` — pure & deterministic, runs on
 both server and client):
 
-- **Swiss stages (Challengers + Legends, 16 teams):**
-  - 1 pt per correct *advance* pick
-  - +4 bonus if your **3-0** pick goes 3-0
-  - +4 bonus if your **0-3** pick goes 0-3
+- **Swiss stages (Challengers + Legends, 16 teams)** — 2025/26 Valve format:
+  - Pick **2** teams to go 3-0, **2** teams to go 0-3, **6** teams to advance 3-1/3-2.
+  - 1 pt per correct *advance* pick.
+  - +4 bonus per correct **3-0** pick (only one team can be right per stage).
+  - +4 bonus per correct **0-3** pick.
 - **Champions playoffs (8 teams, single-elim):**
   - QF win = 1 pt · SF win = 2 pts · GF win = 4 pts · Champion = +4 pts
 

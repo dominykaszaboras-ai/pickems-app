@@ -96,9 +96,10 @@ model TournamentTeam {
   @@unique([tournamentId, teamId])
 }
 
-// StageKind values: "CHALLENGERS" | "LEGENDS" | "CHAMPIONS".
-// We keep `kind` as a String (not a Prisma enum) so the same schema works
-// across SQLite/Postgres without migrations on the enum type.
+// StageKind values (Cologne 2026+ format):
+//   "STAGE_1" | "STAGE_2" | "STAGE_3" | "PLAYOFFS"
+// Old majors used CHALLENGERS / LEGENDS / CHAMPIONS — kept as a String
+// (not a Prisma enum) so renaming is just a data migration, no schema change.
 
 model Stage {
   id           String     @id @default(cuid())

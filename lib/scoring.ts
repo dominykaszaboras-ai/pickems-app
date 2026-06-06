@@ -15,14 +15,15 @@
 // This means the bracket page can run the same logic client-side to live-update
 // scores when the user simulates outcomes.
 
-import type {
-  ClientMatch,
-  ClientPickem,
-  ClientStage,
-  ClientTournament,
-  PickKind,
-  StageKind,
-  SwissStanding,
+import {
+  emptyByStage,
+  type ClientMatch,
+  type ClientPickem,
+  type ClientStage,
+  type ClientTournament,
+  type PickKind,
+  type StageKind,
+  type SwissStanding,
 } from "./types";
 
 // Override: matchId -> winning teamId (used by the simulation UI).
@@ -154,6 +155,8 @@ function scorePlayoffs(
   overrides: WinnerOverrides,
   out: ScoreLine,
 ) {
+  // No-op outside the playoffs stage.
+  if (stage.kind !== "PLAYOFFS") return;
   // Group matches by bracketRound.
   const rounds: Record<number, ClientMatch[]> = {};
   for (const m of stage.matches) {
@@ -177,7 +180,7 @@ function scorePlayoffs(
   const pointsForRound: Record<number, number> = { 1: 1, 2: 2, 3: 4, 4: 4 };
 
   for (const pick of pickem.picks) {
-    if (pick.stageKind !== "CHAMPIONS" || pick.kind !== "PLAYOFF_WINNER") continue;
+    if (pick.stageKind !== "PLAYOFFS" || pick.kind !== "PLAYOFF_WINNER") continue;
     const r = pick.round ?? 0;
     const ms = rounds[r] ?? [];
     const allDone = ms.length > 0 && ms.every((m) => effectiveWinner(m, overrides) !== null);
@@ -195,11 +198,11 @@ function scorePlayoffs(
       correct = false;
     }
 
-    out.byStage.CHAMPIONS += points;
+    out.byStage.PLAYOFFS += points;
     out.total += points;
     out.pickResults.push({
       kind: pick.kind,
-      stageKind: "CHAMPIONS",
+      stageKind: "PLAYOFFS",
       teamId: pick.teamId,
       round: pick.round,
       points,
@@ -215,11 +218,11 @@ export function scorePickem(
 ): ScoreLine {
   const out: ScoreLine = {
     total: 0,
-    byStage: { CHALLENGERS: 0, LEGENDS: 0, CHAMPIONS: 0 },
+    byStage: emptyByStage(),
     pickResults: [],
   };
   for (const stage of tournament.stages) {
-    if (stage.kind === "CHAMPIONS") scorePlayoffs(stage, pickem, overrides, out);
+    if (stage.kind === "PLAYOFFS") scorePlayoffs(stage, pickem, overrides, out);
     else scoreSwissStage(stage, pickem, overrides, out);
   }
   return out;

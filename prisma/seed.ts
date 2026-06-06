@@ -53,9 +53,10 @@ async function main() {
   }
 
   for (const [kind, name] of [
-    ["CHALLENGERS", "Challengers Stage"],
-    ["LEGENDS", "Legends Stage"],
-    ["CHAMPIONS", "Champions Stage"],
+    ["STAGE_1", "Stage 1 (Swiss)"],
+    ["STAGE_2", "Stage 2 (Swiss)"],
+    ["STAGE_3", "Stage 3 (Swiss)"],
+    ["PLAYOFFS", "Playoffs"],
   ] as const) {
     const stage = await prisma.stage.upsert({
       where: { tournamentId_kind: { tournamentId: tournament.id, kind } },
@@ -63,7 +64,7 @@ async function main() {
       create: { tournamentId: tournament.id, kind, name },
     });
 
-    if (kind === "CHAMPIONS") {
+    if (kind === "PLAYOFFS") {
       // Empty 8-team single-elim bracket: 4 QFs, 2 SFs, 1 GF.
       for (let i = 0; i < 4; i++) {
         await prisma.match.create({

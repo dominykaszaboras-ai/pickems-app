@@ -2,7 +2,7 @@
 
 A pickems site for CS2 Majors with:
 
-- 📊 A live tournament view (Challengers / Legends Swiss stages + Champions playoff bracket)
+- 📊 A live tournament view (Stage 1 / 2 / 3 Swiss stages + single-elim Playoffs bracket — Cologne 2026 format)
 - 🎮 A click-to-simulate UI — click a team in any unfinished match and your pickems score updates instantly
 - 🔄 Automatic data sync from **hltv.org** (via the unofficial `hltv` scraping package, runs every 10 minutes on Vercel Cron)
 - 🔐 Multi-user accounts (NextAuth — email/password, optional GitHub)
@@ -94,12 +94,12 @@ Open the Major's page on hltv.org/events — the ID is in the URL, e.g.
 Standard Valve pickems format (`lib/scoring.ts` — pure & deterministic, runs on
 both server and client):
 
-- **Swiss stages (Challengers + Legends, 16 teams)** — 2025/26 Valve format:
-  - Pick **2** teams to go 3-0, **2** teams to go 0-3, **6** teams to advance 3-1/3-2.
+- **Swiss stages (Stage 1 / 2 / 3, 16 teams each)** — 2025/26 Valve format:
+  - Pick **2** teams to go 3-0, **2** teams to go 0-3, **6** teams to advance 3-1/3-2 — per stage.
   - 1 pt per correct *advance* pick.
   - +4 bonus per correct **3-0** pick (only one team can be right per stage).
   - +4 bonus per correct **0-3** pick.
-- **Champions playoffs (8 teams, single-elim):**
+- **Playoffs (8 teams, single-elim):**
   - QF win = 1 pt · SF win = 2 pts · GF win = 4 pts · Champion = +4 pts
 
 ## Simulation mode

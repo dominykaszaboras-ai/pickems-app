@@ -28,9 +28,10 @@ export default async function LeaderboardPage() {
           <tr>
             <th className="px-3 py-2 text-left">#</th>
             <th className="px-3 py-2 text-left">Player</th>
-            <th className="px-3 py-2 text-right">Chal.</th>
-            <th className="px-3 py-2 text-right">Leg.</th>
-            <th className="px-3 py-2 text-right">Champ.</th>
+            <th className="px-3 py-2 text-right">S1</th>
+            <th className="px-3 py-2 text-right">S2</th>
+            <th className="px-3 py-2 text-right">S3</th>
+            <th className="px-3 py-2 text-right">PO</th>
             <th className="px-3 py-2 text-right">Total</th>
           </tr>
         </thead>
@@ -39,9 +40,10 @@ export default async function LeaderboardPage() {
             <tr key={r.p.id} className="border-t border-line">
               <td className="px-3 py-2 text-muted">{i + 1}</td>
               <td className="px-3 py-2">{r.p.userName ?? "Anonymous"}</td>
-              <td className="px-3 py-2 text-right font-mono">{r.score.byStage.CHALLENGERS}</td>
-              <td className="px-3 py-2 text-right font-mono">{r.score.byStage.LEGENDS}</td>
-              <td className="px-3 py-2 text-right font-mono">{r.score.byStage.CHAMPIONS}</td>
+              <td className="px-3 py-2 text-right font-mono">{r.score.byStage.STAGE_1}</td>
+              <td className="px-3 py-2 text-right font-mono">{r.score.byStage.STAGE_2}</td>
+              <td className="px-3 py-2 text-right font-mono">{r.score.byStage.STAGE_3}</td>
+              <td className="px-3 py-2 text-right font-mono">{r.score.byStage.PLAYOFFS}</td>
               <td className="px-3 py-2 text-right font-mono font-semibold text-accent">
                 {r.score.total}
               </td>
@@ -49,7 +51,7 @@ export default async function LeaderboardPage() {
           ))}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={6} className="px-3 py-6 text-center text-muted">
+              <td colSpan={7} className="px-3 py-6 text-center text-muted">
                 No pickems submitted yet.
               </td>
             </tr>

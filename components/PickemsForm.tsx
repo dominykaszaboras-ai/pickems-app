@@ -1,12 +1,14 @@
 "use client";
 import { useMemo, useState } from "react";
 import clsx from "clsx";
-import type {
-  ClientPickem,
-  ClientPickemPick,
-  ClientTeam,
-  ClientTournament,
-  StageKind,
+import {
+  SWISS_STAGE_KINDS,
+  STAGE_LABEL,
+  type ClientPickem,
+  type ClientPickemPick,
+  type ClientTeam,
+  type ClientTournament,
+  type StageKind,
 } from "@/lib/types";
 import { TeamLogo } from "./TeamLogo";
 
@@ -41,8 +43,17 @@ export function PickemsForm({
     };
   }
 
-  const [challengers, setChallengers] = useState<SwissPicks>(pickedOf("CHALLENGERS"));
-  const [legends, setLegends] = useState<SwissPicks>(pickedOf("LEGENDS"));
+  // One SwissPicks state slot per Swiss stage.
+  const [swiss, setSwiss] = useState<Record<StageKind, SwissPicks>>(() => ({
+    STAGE_1: pickedOf("STAGE_1"),
+    STAGE_2: pickedOf("STAGE_2"),
+    STAGE_3: pickedOf("STAGE_3"),
+    PLAYOFFS: { three_oh: [], zero_three: [], advance: [] }, // unused
+  }));
+  function setSwissFor(kind: StageKind) {
+    return (p: SwissPicks) => setSwiss((prev) => ({ ...prev, [kind]: p }));
+  }
+
   const [playoffs, setPlayoffs] = useState<Record<number, string | null>>(() => {
     const init: Record<number, string | null> = { 1: null, 2: null, 3: null, 4: null };
     for (const p of initial?.picks ?? []) {
@@ -56,19 +67,17 @@ export function PickemsForm({
 
   const allPicks: ClientPickemPick[] = useMemo(() => {
     const out: ClientPickemPick[] = [];
-    for (const [stageKind, sp] of [
-      ["CHALLENGERS", challengers] as const,
-      ["LEGENDS", legends] as const,
-    ]) {
+    for (const stageKind of SWISS_STAGE_KINDS) {
+      const sp = swiss[stageKind];
       for (const t of sp.three_oh) out.push({ kind: "SWISS_3_0", stageKind, teamId: t, round: null });
       for (const t of sp.zero_three) out.push({ kind: "SWISS_0_3", stageKind, teamId: t, round: null });
       for (const t of sp.advance) out.push({ kind: "SWISS_ADVANCE", stageKind, teamId: t, round: null });
     }
     for (const [round, teamId] of Object.entries(playoffs)) {
-      if (teamId) out.push({ kind: "PLAYOFF_WINNER", stageKind: "CHAMPIONS", teamId, round: Number(round) });
+      if (teamId) out.push({ kind: "PLAYOFF_WINNER", stageKind: "PLAYOFFS", teamId, round: Number(round) });
     }
     return out;
-  }, [challengers, legends, playoffs]);
+  }, [swiss, playoffs]);
 
   async function save() {
     setSaving(true);
@@ -88,8 +97,15 @@ export function PickemsForm({
 
   return (
     <div className="flex flex-col gap-10">
-      <SwissPicker title="Challengers Stage" teams={teams} picks={challengers} setPicks={setChallengers} />
-      <SwissPicker title="Legends Stage" teams={teams} picks={legends} setPicks={setLegends} />
+      {SWISS_STAGE_KINDS.map((kind) => (
+        <SwissPicker
+          key={kind}
+          title={STAGE_LABEL[kind] + " (Swiss)"}
+          teams={teams}
+          picks={swiss[kind]}
+          setPicks={setSwissFor(kind)}
+        />
+      ))}
       <PlayoffsPicker teams={teams} picks={playoffs} setPicks={setPlayoffs} />
 
       <div className="sticky bottom-4 flex items-center justify-between rounded-2xl border border-line bg-panel/90 p-4 backdrop-blur">

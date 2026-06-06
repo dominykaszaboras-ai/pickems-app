@@ -31,9 +31,10 @@ export function BracketView({
     [tournament, myPickem, overrides],
   );
 
-  const challengers = tournament.stages.find((s) => s.kind === "CHALLENGERS");
-  const legends = tournament.stages.find((s) => s.kind === "LEGENDS");
-  const champions = tournament.stages.find((s) => s.kind === "CHAMPIONS");
+  const swissStages = tournament.stages
+    .filter((s) => s.kind !== "PLAYOFFS")
+    .sort((a, b) => a.kind.localeCompare(b.kind));
+  const playoffs = tournament.stages.find((s) => s.kind === "PLAYOFFS");
 
   return (
     <div className="flex flex-col gap-6">
@@ -48,9 +49,10 @@ export function BracketView({
         </div>
         {myScore && (
           <div className="flex items-center gap-4 text-sm">
-            <ScoreChip label="Challengers" value={myScore.byStage.CHALLENGERS} />
-            <ScoreChip label="Legends" value={myScore.byStage.LEGENDS} />
-            <ScoreChip label="Champions" value={myScore.byStage.CHAMPIONS} />
+            <ScoreChip label="S1" value={myScore.byStage.STAGE_1} />
+            <ScoreChip label="S2" value={myScore.byStage.STAGE_2} />
+            <ScoreChip label="S3" value={myScore.byStage.STAGE_3} />
+            <ScoreChip label="PO" value={myScore.byStage.PLAYOFFS} />
             <ScoreChip label="Total" value={myScore.total} accent />
           </div>
         )}
@@ -70,14 +72,17 @@ export function BracketView({
         </div>
       )}
 
-      {challengers && (
-        <SwissStage stage={challengers} overrides={overrides} setOverride={setOverride} pickem={myPickem} />
-      )}
-      {legends && (
-        <SwissStage stage={legends} overrides={overrides} setOverride={setOverride} pickem={myPickem} />
-      )}
-      {champions && (
-        <PlayoffBracket stage={champions} overrides={overrides} setOverride={setOverride} pickem={myPickem} />
+      {swissStages.map((stage) => (
+        <SwissStage
+          key={stage.id}
+          stage={stage}
+          overrides={overrides}
+          setOverride={setOverride}
+          pickem={myPickem}
+        />
+      ))}
+      {playoffs && (
+        <PlayoffBracket stage={playoffs} overrides={overrides} setOverride={setOverride} pickem={myPickem} />
       )}
     </div>
   );

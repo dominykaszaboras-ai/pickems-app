@@ -1,5 +1,19 @@
 // Shared domain types used by client + server.
-export type StageKind = "CHALLENGERS" | "LEGENDS" | "CHAMPIONS";
+//
+// Cologne 2026 format: three Swiss stages + a single-elim playoff bracket.
+// (Previous Majors used CHALLENGERS / LEGENDS / CHAMPIONS — the new names
+// reflect Valve's renamed structure.)
+export type StageKind = "STAGE_1" | "STAGE_2" | "STAGE_3" | "PLAYOFFS";
+
+// Convenience subsets.
+export const SWISS_STAGE_KINDS: StageKind[] = ["STAGE_1", "STAGE_2", "STAGE_3"];
+
+export const STAGE_LABEL: Record<StageKind, string> = {
+  STAGE_1: "Stage 1",
+  STAGE_2: "Stage 2",
+  STAGE_3: "Stage 3",
+  PLAYOFFS: "Playoffs",
+};
 
 export type PickKind =
   | "SWISS_3_0"
@@ -65,6 +79,11 @@ export interface ClientPickem {
   userName: string | null;
   tournamentId: string;
   picks: ClientPickemPick[];
+}
+
+// Empty byStage record, useful as an accumulator init.
+export function emptyByStage(): Record<StageKind, number> {
+  return { STAGE_1: 0, STAGE_2: 0, STAGE_3: 0, PLAYOFFS: 0 };
 }
 
 // Stage-level computed standings for swiss

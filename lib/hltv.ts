@@ -95,9 +95,12 @@ function parseDate(d: unknown): Date | null {
 function inferStageKind(label: string | null | undefined): StageKind | null {
   if (!label) return null;
   const s = label.toLowerCase();
-  if (s.includes("challenger")) return "CHALLENGERS";
-  if (s.includes("legends") || s.includes("elimination") || s.includes("opening")) return "LEGENDS";
-  if (s.includes("playoff") || s.includes("champions") || s.includes("quarter") || s.includes("semi") || s.includes("final")) return "CHAMPIONS";
+  // Cologne 2026 onward: Stage 1 / Stage 2 / Stage 3 (all Swiss) + Playoffs.
+  if (s.includes("stage 1") || s.includes("stage-1") || s.includes("challenger")) return "STAGE_1";
+  if (s.includes("stage 2") || s.includes("stage-2") || s.includes("legends") || s.includes("opening")) return "STAGE_2";
+  if (s.includes("stage 3") || s.includes("stage-3") || s.includes("elimination")) return "STAGE_3";
+  if (s.includes("playoff") || s.includes("champions") || s.includes("quarter") || s.includes("semi") || s.includes("final"))
+    return "PLAYOFFS";
   return null;
 }
 

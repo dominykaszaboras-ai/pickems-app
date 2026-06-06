@@ -6,9 +6,10 @@ import { fetchEventSnapshot, type HltvMatch } from "./hltv";
 import type { StageKind } from "./types";
 
 const STAGE_NAMES: Record<StageKind, string> = {
-  CHALLENGERS: "Challengers Stage",
-  LEGENDS: "Legends Stage",
-  CHAMPIONS: "Champions Stage",
+  STAGE_1: "Stage 1 (Swiss)",
+  STAGE_2: "Stage 2 (Swiss)",
+  STAGE_3: "Stage 3 (Swiss)",
+  PLAYOFFS: "Playoffs",
 };
 
 export async function syncTournament(hltvEventId: number) {
@@ -52,9 +53,14 @@ export async function syncTournament(hltvEventId: number) {
     });
   }
 
-  // 3. Make sure the three stages exist.
-  const stageIdByKind: Record<StageKind, string> = { CHALLENGERS: "", LEGENDS: "", CHAMPIONS: "" };
-  for (const kind of ["CHALLENGERS", "LEGENDS", "CHAMPIONS"] as StageKind[]) {
+  // 3. Make sure all four stages exist.
+  const stageIdByKind: Record<StageKind, string> = {
+    STAGE_1: "",
+    STAGE_2: "",
+    STAGE_3: "",
+    PLAYOFFS: "",
+  };
+  for (const kind of ["STAGE_1", "STAGE_2", "STAGE_3", "PLAYOFFS"] as StageKind[]) {
     const stage = await prisma.stage.upsert({
       where: { tournamentId_kind: { tournamentId: tournament.id, kind } },
       update: {},

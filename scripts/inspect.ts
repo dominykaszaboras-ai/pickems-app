@@ -3,6 +3,12 @@ import { PrismaClient } from "@prisma/client";
 const p = new PrismaClient();
 
 async function main() {
+  // Also print User columns so we can verify schema sync.
+  const cols = await p.$queryRawUnsafe<Array<{ column_name: string }>>(
+    `SELECT column_name FROM information_schema.columns WHERE table_name = 'User' ORDER BY column_name`,
+  );
+  console.log("User cols:", cols.map((c) => c.column_name).join(", "));
+
   const stages = await p.stage.findMany({
     where: { tournament: { hltvEventId: Number(process.env.HLTV_EVENT_ID ?? 8301) } },
     include: {

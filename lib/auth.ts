@@ -7,6 +7,7 @@ import GitHub from "next-auth/providers/github";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import bcrypt from "bcryptjs";
 import { prisma } from "./db";
+import { fetchSteamProfile, verifySignedSteamId } from "./steam";
 
 // Explicit type annotation prevents TS from narrowing the array to
 // `CredentialsConfig[]` (which then rejects pushing the OAuth GitHub provider).
@@ -25,6 +26,36 @@ const providers: NextAuthConfig["providers"] = [
       if (!user?.passwordHash) return null;
       const ok = await bcrypt.compare(password, user.passwordHash);
       if (!ok) return null;
+      return { id: user.id, name: user.name, email: user.email, image: user.image };
+    },
+  }),
+  // Steam — invoked only by /api/auth/steam/callback after Steam OpenID
+  // verification succeeds. The `token` field is an HMAC of the SteamID with
+  // AUTH_SECRET, so only requests originating from our own callback can
+  // pass `authorize`. Direct browser POSTs without a valid HMAC are rejected.
+  Credentials({
+    id: "steam",
+    name: "Steam",
+    credentials: { token: { label: "Steam token", type: "text" } },
+    async authorize(creds) {
+      const token = String(creds?.token ?? "");
+      const steamId = verifySignedSteamId(token);
+      if (!steamId) return null;
+      const profile = await fetchSteamProfile(steamId);
+      // Upsert by steamId; fall back to a friendly placeholder name if the
+      // Steam Web API key isn't configured (still gives a usable identity).
+      const user = await prisma.user.upsert({
+        where: { steamId },
+        update: {
+          name: profile?.name ?? undefined,
+          image: profile?.avatar ?? undefined,
+        },
+        create: {
+          steamId,
+          name: profile?.name ?? `Steam ${steamId.slice(-4)}`,
+          image: profile?.avatar ?? null,
+        },
+      });
       return { id: user.id, name: user.name, email: user.email, image: user.image };
     },
   }),

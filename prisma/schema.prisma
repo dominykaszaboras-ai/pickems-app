@@ -18,6 +18,9 @@ model User {
   emailVerified DateTime?
   image         String?
   passwordHash  String?
+  // Steam OpenID-verified SteamID64 (e.g. 76561198xxxxxxxxx). Optional so
+  // email/password users still work.
+  steamId       String?   @unique
   accounts      Account[]
   sessions      Session[]
   pickems       Pickem[]

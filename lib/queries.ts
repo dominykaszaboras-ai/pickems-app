@@ -117,6 +117,6 @@ export async function getAllPickems(tournamentId: string): Promise<ClientPickem[
   }));
 }
 
-function toTeam(t: { id: string; hltvId: number; name: string; logo: string | null }): ClientTeam {
+function toTeam(t: { id: string; hltvId: number | null; name: string; logo: string | null }): ClientTeam {
   return { id: t.id, hltvId: t.hltvId, name: t.name, logo: t.logo };
 }

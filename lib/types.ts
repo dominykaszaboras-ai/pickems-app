@@ -25,7 +25,9 @@ export type MatchStatus = "PENDING" | "LIVE" | "FINISHED";
 
 export interface ClientTeam {
   id: string;
-  hltvId: number;
+  // HLTV's /results endpoint dropped team ids, so identity is name-keyed
+  // and hltvId is nullable.
+  hltvId: number | null;
   name: string;
   logo: string | null;
 }

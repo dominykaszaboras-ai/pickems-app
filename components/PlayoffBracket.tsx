@@ -1,8 +1,9 @@
 "use client";
 import { useMemo } from "react";
-import type { ClientPickem, ClientStage } from "@/lib/types";
-import { effectiveWinner, type WinnerOverrides } from "@/lib/scoring";
+import type { ClientPickem, ClientStage, ClientTeam } from "@/lib/types";
+import { effectiveWinner, type ScoreLine, type WinnerOverrides } from "@/lib/scoring";
 import { MatchCard } from "./MatchCard";
+import { PickSummary } from "./PickSummary";
 
 const ROUND_LABELS: Record<number, string> = {
   1: "Quarter-finals",
@@ -15,11 +16,13 @@ export function PlayoffBracket({
   overrides,
   setOverride,
   pickem,
+  score,
 }: {
   stage: ClientStage;
   overrides: WinnerOverrides;
   setOverride: (matchId: string, teamId: string | null) => void;
   pickem: ClientPickem | null;
+  score: ScoreLine | null;
 }) {
   const rounds = useMemo(() => {
     const map: Record<number, typeof stage.matches> = {};
@@ -43,9 +46,18 @@ export function PlayoffBracket({
     return out;
   }, [pickem]);
 
+  const teamsById = useMemo(() => {
+    const m = new Map<string, ClientTeam>();
+    for (const t of stage.teams) m.set(t.id, t);
+    return m;
+  }, [stage.teams]);
+
   return (
     <section className="rounded-2xl border border-line bg-panel p-4">
       <h2 className="mb-3 text-lg font-semibold">{stage.name}</h2>
+      <div className="mb-4">
+        <PickSummary stage={stage} score={score} teamsById={teamsById} />
+      </div>
       <div className="flex gap-6 overflow-x-auto">
         {rounds.map((col) => (
           <div key={col.round} className="flex min-w-[240px] flex-1 flex-col gap-3">

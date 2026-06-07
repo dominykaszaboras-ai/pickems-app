@@ -79,10 +79,17 @@ export function BracketView({
           overrides={overrides}
           setOverride={setOverride}
           pickem={myPickem}
+          score={myScore}
         />
       ))}
       {playoffs && (
-        <PlayoffBracket stage={playoffs} overrides={overrides} setOverride={setOverride} pickem={myPickem} />
+        <PlayoffBracket
+          stage={playoffs}
+          overrides={overrides}
+          setOverride={setOverride}
+          pickem={myPickem}
+          score={myScore}
+        />
       )}
     </div>
   );

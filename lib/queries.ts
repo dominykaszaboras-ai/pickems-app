@@ -22,11 +22,8 @@ export async function getActiveTournament(): Promise<ClientTournament | null> {
   });
   if (!t) return null;
 
-  const stages: ClientStage[] = t.stages.map((s) => ({
-    id: s.id,
-    kind: s.kind as StageKind,
-    name: s.name,
-    matches: s.matches
+  const stages: ClientStage[] = t.stages.map((s) => {
+    const matches: ClientMatch[] = s.matches
       .sort((a, b) => (a.swissRound ?? a.bracketRound ?? 0) - (b.swissRound ?? b.bracketRound ?? 0))
       .map(
         (m): ClientMatch => ({
@@ -45,8 +42,25 @@ export async function getActiveTournament(): Promise<ClientTournament | null> {
           startTime: m.startTime?.toISOString() ?? null,
           winnerId: m.winnerId,
         }),
-      ),
-  }));
+      );
+
+    // Per-stage team roster — dedup by id, sort by name. Each Swiss stage has
+    // its own 16-team field that overlaps only partially with adjacent stages.
+    const teamMap = new Map<string, ClientTeam>();
+    for (const m of matches) {
+      if (m.teamA && !teamMap.has(m.teamA.id)) teamMap.set(m.teamA.id, m.teamA);
+      if (m.teamB && !teamMap.has(m.teamB.id)) teamMap.set(m.teamB.id, m.teamB);
+    }
+    const teams = [...teamMap.values()].sort((a, b) => a.name.localeCompare(b.name));
+
+    return {
+      id: s.id,
+      kind: s.kind as StageKind,
+      name: s.name,
+      matches,
+      teams,
+    };
+  });
 
   return {
     id: t.id,

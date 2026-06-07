@@ -10,7 +10,7 @@
 //   HLTV_STAGE_EVENTS="STAGE_1:9028,STAGE_2:9029,STAGE_3:9030,PLAYOFFS:9031"
 
 import { prisma } from "./db";
-import { fetchEventSnapshot, fetchStageMatches } from "./hltv";
+import { fetchEventSnapshot, fetchStageMatches, fetchTeamLogo } from "./hltv";
 import type { StageKind } from "./types";
 
 export type StageEventMap = Partial<Record<StageKind, number>>;
@@ -155,12 +155,38 @@ export async function syncTournament(
     });
   }
 
+  // 5. Backfill missing team logos. HLTV's event-list endpoint doesn't
+  // include logos, so we lazily fetch one per team that's still missing one.
+  // We grab ALL teams referenced by any match in this tournament's stages,
+  // including the ones added on the fly via ensureTeam (which don't get
+  // TournamentTeam rows). Bounded at ~30 teams and only runs once per team.
+  const teamsNeedingLogo = await prisma.team.findMany({
+    where: {
+      logo: null,
+      OR: [
+        { tournaments: { some: { tournamentId: tournament.id } } },
+        { matchesA: { some: { stage: { tournamentId: tournament.id } } } },
+        { matchesB: { some: { stage: { tournamentId: tournament.id } } } },
+      ],
+    },
+    select: { id: true, hltvId: true },
+  });
+  let logosFetched = 0;
+  for (const t of teamsNeedingLogo) {
+    const logo = await fetchTeamLogo(t.hltvId);
+    if (logo) {
+      await prisma.team.update({ where: { id: t.id }, data: { logo } });
+      logosFetched++;
+    }
+  }
+
   return {
     tournamentId: tournament.id,
     name: tournament.name,
     slug: tournament.slug,
     matchesPulled: all.length,
     stages: Object.keys(stageEvents),
+    logosFetched,
   };
 }
 

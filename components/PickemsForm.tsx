@@ -29,10 +29,20 @@ export function PickemsForm({
   tournament: ClientTournament;
   initial: ClientPickem | null;
 }) {
-  // Split teams roughly between Challengers / Legends. Without real stage rosters
-  // from HLTV, we let the user just pick from all 16+ teams in each stage.
-  // (In a fully wired sync, you'd track which 16 teams are in each stage.)
-  const teams = tournament.teams;
+  // Per-stage team rosters are computed server-side from each stage's match
+  // list (see lib/queries.ts). Falls back to the umbrella `tournament.teams`
+  // for stages that have no synced matches yet (e.g. Stage 3 / Playoffs
+  // before they go live), so the form is still usable while waiting on data.
+  const stagesByKind = new Map<StageKind, ClientTeam[]>();
+  for (const s of tournament.stages) {
+    stagesByKind.set(s.kind, s.teams.length > 0 ? s.teams : tournament.teams);
+  }
+  const teamsFor = (k: StageKind): ClientTeam[] =>
+    stagesByKind.get(k) ?? tournament.teams;
+  // Playoffs picker uses the union of all known teams as a fallback.
+  const playoffTeams = stagesByKind.get("PLAYOFFS")?.length
+    ? (stagesByKind.get("PLAYOFFS") as ClientTeam[])
+    : tournament.teams;
 
   function pickedOf(stage: StageKind): SwissPicks {
     const inStage = (initial?.picks ?? []).filter((p) => p.stageKind === stage);
@@ -101,12 +111,12 @@ export function PickemsForm({
         <SwissPicker
           key={kind}
           title={STAGE_LABEL[kind] + " (Swiss)"}
-          teams={teams}
+          teams={teamsFor(kind)}
           picks={swiss[kind]}
           setPicks={setSwissFor(kind)}
         />
       ))}
-      <PlayoffsPicker teams={teams} picks={playoffs} setPicks={setPlayoffs} />
+      <PlayoffsPicker teams={playoffTeams} picks={playoffs} setPicks={setPlayoffs} />
 
       <div className="sticky bottom-4 flex items-center justify-between rounded-2xl border border-line bg-panel/90 p-4 backdrop-blur">
         <div className="text-sm text-muted">{allPicks.length} picks selected</div>

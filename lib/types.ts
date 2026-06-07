@@ -52,6 +52,11 @@ export interface ClientStage {
   kind: StageKind;
   name: string;
   matches: ClientMatch[];
+  // Teams that actually played in (or are slotted for) this stage — derived
+  // from match rosters at query time. Use this when rendering pick pools,
+  // standings, etc. — NOT the umbrella tournament.teams, which is the union
+  // of every stage and contains teams that don't belong here.
+  teams: ClientTeam[];
 }
 
 export interface ClientTournament {

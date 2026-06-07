@@ -49,6 +49,20 @@ export interface HltvEventSnapshot {
 
 // --- Public API --------------------------------------------------------------
 
+// Fetch the logo URL for a single team via HLTV.getTeam. The event-list
+// response doesn't include logos, but the team detail endpoint does. We call
+// this lazily during sync — only for teams that don't yet have one stored.
+export async function fetchTeamLogo(hltvId: number): Promise<string | null> {
+  try {
+    const t = (await HLTV.getTeam({ id: hltvId })) as any;
+    const url: string | undefined = t?.logo ?? t?.image ?? undefined;
+    if (typeof url === "string" && url.startsWith("http")) return url;
+  } catch (e) {
+    console.warn(`[hltv] getTeam(${hltvId}) failed:`, (e as Error).message);
+  }
+  return null;
+}
+
 export async function fetchEventSnapshot(eventId: number): Promise<HltvEventSnapshot> {
   // 1. Event page — has name/dates and the list of attending teams.
   const event = (await HLTV.getEvent({ id: eventId })) as any;

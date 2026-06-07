@@ -42,18 +42,19 @@ const providers: NextAuthConfig["providers"] = [
       const steamId = verifySignedSteamId(token);
       if (!steamId) return null;
       const profile = await fetchSteamProfile(steamId);
-      // Upsert by steamId; fall back to a friendly placeholder name if the
-      // Steam Web API key isn't configured (still gives a usable identity).
+      // Upsert by steamId. We refresh name + image on every login so users
+      // who previously got the "Steam XXXX" placeholder (back when we had
+      // no profile fetch) update to their real persona on next sign-in.
       const user = await prisma.user.upsert({
         where: { steamId },
         update: {
-          name: profile?.name ?? undefined,
-          image: profile?.avatar ?? undefined,
+          name: profile.name ?? undefined,
+          image: profile.avatar ?? undefined,
         },
         create: {
           steamId,
-          name: profile?.name ?? `Steam ${steamId.slice(-4)}`,
-          image: profile?.avatar ?? null,
+          name: profile.name ?? `Steam ${steamId.slice(-4)}`,
+          image: profile.avatar ?? null,
         },
       });
       return { id: user.id, name: user.name, email: user.email, image: user.image };

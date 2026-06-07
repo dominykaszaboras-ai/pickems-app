@@ -66,28 +66,47 @@ export async function verifyCallback(searchParams: URLSearchParams): Promise<str
   return steamId;
 }
 
-// --- Step 3 (optional): fetch profile via Steam Web API --------------------
-export async function fetchSteamProfile(steamId: string): Promise<SteamProfile | null> {
-  const key = process.env.STEAM_API_KEY;
-  if (!key) return { steamId, name: null, avatar: null, profileUrl: null };
-  const url =
-    `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/` +
-    `?key=${key}&steamids=${steamId}`;
+// --- Step 3: fetch profile via Steam's PUBLIC community XML ----------------
+// Public profiles expose name + avatar at
+//   https://steamcommunity.com/profiles/<steamid64>?xml=1
+// No API key required. If a user's profile is private, we fall back to a
+// placeholder. The XML schema is stable enough that small regex extractors
+// are safer (and lighter) than importing a full XML parser.
+export async function fetchSteamProfile(steamId: string): Promise<SteamProfile> {
+  const url = `https://steamcommunity.com/profiles/${steamId}?xml=1`;
   try {
-    const r = await fetch(url, { headers: { "user-agent": "pickems-app" } });
+    const r = await fetch(url, {
+      headers: {
+        "user-agent":
+          "Mozilla/5.0 (compatible; pickems-app/1.0; +https://pickems-app-production.up.railway.app)",
+      },
+    });
     if (!r.ok) return { steamId, name: null, avatar: null, profileUrl: null };
-    const data = await r.json();
-    const p = data?.response?.players?.[0];
-    if (!p) return { steamId, name: null, avatar: null, profileUrl: null };
+    const xml = await r.text();
     return {
       steamId,
-      name: p.personaname ?? null,
-      avatar: p.avatarfull ?? p.avatarmedium ?? null,
-      profileUrl: p.profileurl ?? null,
+      name: cdata(xml, "steamID") ?? cdata(xml, "personaname"),
+      // Prefer the largest avatar Steam exposes.
+      avatar:
+        cdata(xml, "avatarFull") ??
+        cdata(xml, "avatarMedium") ??
+        cdata(xml, "avatarIcon"),
+      profileUrl: cdata(xml, "customURL")
+        ? `https://steamcommunity.com/id/${cdata(xml, "customURL")}/`
+        : `https://steamcommunity.com/profiles/${steamId}/`,
     };
   } catch {
     return { steamId, name: null, avatar: null, profileUrl: null };
   }
+}
+
+// Pull the inner text of a tag, whether wrapped in <![CDATA[...]]> or not.
+function cdata(xml: string, tag: string): string | null {
+  const re = new RegExp(`<${tag}>(?:<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>|([\\s\\S]*?))</${tag}>`, "i");
+  const m = xml.match(re);
+  if (!m) return null;
+  const val = (m[1] ?? m[2] ?? "").trim();
+  return val.length > 0 ? val : null;
 }
 
 // --- HMAC helpers ---------------------------------------------------------

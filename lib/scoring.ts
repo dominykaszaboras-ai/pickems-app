@@ -110,9 +110,15 @@ function scoreSwissStage(
     let correct: boolean | null = null;
 
     if (pick.kind === "SWISS_ADVANCE") {
-      if (s?.status === "ADVANCED") {
+      // An ADVANCE pick is correct only if the team finishes 3-1 or 3-2 —
+      // i.e. advanced *without* a 3-0 run. A 3-0 team only satisfies the
+      // SWISS_3_0 pick and is wrong as an ADVANCE pick.
+      if (s?.status === "ADVANCED" && s.losses >= 1) {
         points = 1;
         correct = true;
+      } else if (s?.status === "ADVANCED" && s.losses === 0) {
+        // 3-0 — wrong for an advance pick.
+        correct = false;
       } else if (s?.status === "ELIMINATED") {
         correct = false;
       } else if (!concluded) {

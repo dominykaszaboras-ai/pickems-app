@@ -96,9 +96,9 @@ both server and client):
 
 - **Swiss stages (Stage 1 / 2 / 3, 16 teams each)** — 2025/26 Valve format:
   - Pick **2** teams to go 3-0, **2** teams to go 0-3, **6** teams to advance 3-1/3-2 — per stage.
-  - 1 pt per correct *advance* pick.
-  - +4 bonus per correct **3-0** pick (only one team can be right per stage).
-  - +4 bonus per correct **0-3** pick.
+  - 1 pt per correct *advance* pick — counts ONLY if the team finishes 3-1 or 3-2. A team that goes 3-0 does NOT satisfy the advance pick (it only satisfies the 3-0 pick).
+  - +4 bonus per correct **3-0** pick (team must finish 3-0).
+  - +4 bonus per correct **0-3** pick (team must finish 0-3).
 - **Playoffs (8 teams, single-elim):**
   - QF win = 1 pt · SF win = 2 pts · GF win = 4 pts · Champion = +4 pts
 

@@ -79,8 +79,12 @@ model Tournament {
 
 model Team {
   id           String           @id @default(cuid())
-  hltvId       Int              @unique
-  name         String
+  // HLTV's results endpoint stopped returning team ids in the response —
+  // they ship only { name, logo } now. Keep hltvId optional + unique so old
+  // imports still work and new ones identify by name. Combined with a unique
+  // index on name we can dedupe correctly.
+  hltvId       Int?             @unique
+  name         String           @unique
   logo         String?
   tournaments  TournamentTeam[]
   matchesA     Match[]          @relation("matchTeamA")

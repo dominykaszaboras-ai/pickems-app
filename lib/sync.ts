@@ -63,16 +63,20 @@ export async function syncTournament(
     },
   });
 
-  // 2. Upsert teams and tournament-team link.
-  const teamIdByHltv = new Map<number, string>();
+  // 2. Upsert umbrella teams + tournament-team link. We dedupe primarily by
+  // name (case-insensitive normalised), since HLTV's per-event team listing
+  // does still include ids — but newer endpoints don't. Falling through to
+  // name keeps both pathways working.
+  const teamIdByName = new Map<string, string>(); // key: lowercase name
   for (const t of snap.teams) {
-    if (!t.hltvId) continue;
+    if (!t.name) continue;
+    const key = t.name.toLowerCase();
     const team = await prisma.team.upsert({
-      where: { hltvId: t.hltvId },
-      update: { name: t.name, logo: t.logo },
-      create: { hltvId: t.hltvId, name: t.name, logo: t.logo },
+      where: { name: t.name },
+      update: { hltvId: t.hltvId || undefined, logo: t.logo ?? undefined },
+      create: { name: t.name, hltvId: t.hltvId || null, logo: t.logo ?? null },
     });
-    teamIdByHltv.set(t.hltvId, team.id);
+    teamIdByName.set(key, team.id);
     await prisma.tournamentTeam.upsert({
       where: { tournamentId_teamId: { tournamentId: tournament.id, teamId: team.id } },
       update: {},
@@ -116,12 +120,9 @@ export async function syncTournament(
     const stageKind = m.stageKind;
     if (!stageKind) continue; // umbrella-pulled matches without a stage hint are ignored
 
-    const teamAId = await ensureTeam(m.teamAHltvId, m.teamAName, teamIdByHltv);
-    const teamBId = await ensureTeam(m.teamBHltvId, m.teamBName, teamIdByHltv);
-    const winnerId =
-      m.winnerHltvId && teamIdByHltv.get(m.winnerHltvId)
-        ? teamIdByHltv.get(m.winnerHltvId)!
-        : null;
+    const teamAId = await ensureTeamByName(m.teamAName, m.teamAHltvId, m.teamALogo, teamIdByName);
+    const teamBId = await ensureTeamByName(m.teamBName, m.teamBHltvId, m.teamBLogo, teamIdByName);
+    const winnerId = m.winnerName ? teamIdByName.get(m.winnerName.toLowerCase()) ?? null : null;
 
     await prisma.match.upsert({
       where: { hltvId: m.hltvId },
@@ -155,14 +156,14 @@ export async function syncTournament(
     });
   }
 
-  // 5. Backfill missing team logos. HLTV's event-list endpoint doesn't
-  // include logos, so we lazily fetch one per team that's still missing one.
-  // We grab ALL teams referenced by any match in this tournament's stages,
-  // including the ones added on the fly via ensureTeam (which don't get
-  // TournamentTeam rows). Bounded at ~30 teams and only runs once per team.
+  // 5. Backfill missing team logos by calling HLTV.getTeam(id) — only for
+  // teams that still have no logo AND have a known hltvId. The results
+  // response carries logos inline now, so this only runs for teams whose
+  // logo was missing from the response.
   const teamsNeedingLogo = await prisma.team.findMany({
     where: {
       logo: null,
+      hltvId: { not: null },
       OR: [
         { tournaments: { some: { tournamentId: tournament.id } } },
         { matchesA: { some: { stage: { tournamentId: tournament.id } } } },
@@ -173,6 +174,7 @@ export async function syncTournament(
   });
   let logosFetched = 0;
   for (const t of teamsNeedingLogo) {
+    if (!t.hltvId) continue;
     const logo = await fetchTeamLogo(t.hltvId);
     if (logo) {
       await prisma.team.update({ where: { id: t.id }, data: { logo } });
@@ -190,20 +192,42 @@ export async function syncTournament(
   };
 }
 
-async function ensureTeam(
-  hltvId: number | null,
+// Look up a team by name (case-insensitive cache key), creating it on first
+// sight. We also opportunistically backfill hltvId and logo when we have
+// them and the row doesn't yet. HLTV's results endpoint dropped team ids,
+// so name is the only stable identifier we can rely on going forward.
+async function ensureTeamByName(
   name: string | null,
-  cache: Map<number, string>,
+  hltvId: number | null,
+  logo: string | null,
+  cache: Map<string, string>,
 ): Promise<string | null> {
-  if (!hltvId) return null;
-  const cached = cache.get(hltvId);
-  if (cached) return cached;
+  if (!name) return null;
+  const key = name.toLowerCase();
+  const cached = cache.get(key);
+  if (cached) {
+    // Even on a cache hit, backfill the logo if we just learned it.
+    if (logo) {
+      await prisma.team.updateMany({
+        where: { id: cached, logo: null },
+        data: { logo },
+      });
+    }
+    return cached;
+  }
   const team = await prisma.team.upsert({
-    where: { hltvId },
-    update: name ? { name } : {},
-    create: { hltvId, name: name ?? `Team ${hltvId}` },
+    where: { name },
+    update: {
+      hltvId: hltvId || undefined,
+      logo: logo ?? undefined,
+    },
+    create: {
+      name,
+      hltvId: hltvId || null,
+      logo: logo ?? null,
+    },
   });
-  cache.set(hltvId, team.id);
+  cache.set(key, team.id);
   return team.id;
 }
 

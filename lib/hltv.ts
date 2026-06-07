@@ -24,17 +24,22 @@ export interface HltvMatch {
   swissRound: number | null;
   // For playoffs — derived from stage name ("Quarter-final", "Semi-final", "Grand Final")
   bracketRound: number | null;
+  // HLTV's response shape dropped team IDs from /results — we identify by
+  // name now and carry the logo through alongside, so sync can populate
+  // the Team row without a second getTeam call.
   teamAHltvId: number | null;
   teamBHltvId: number | null;
   teamAName: string | null;
   teamBName: string | null;
+  teamALogo: string | null;
+  teamBLogo: string | null;
   scoreA: number;
   scoreB: number;
   bestOf: number;
   // PENDING | LIVE | FINISHED
   status: "PENDING" | "LIVE" | "FINISHED";
   startTime: Date | null;
-  winnerHltvId: number | null;
+  winnerName: string | null;
 }
 
 export interface HltvEventSnapshot {
@@ -166,6 +171,8 @@ function inferBracketRound(label: string | null | undefined): number | null {
 
 function normalizeMatch(m: any): HltvMatch {
   const stageLabel: string | undefined = m?.format?.name ?? m?.stars?.name ?? m?.eventName;
+  const aName = m?.team1?.name ?? null;
+  const bName = m?.team2?.name ?? null;
   return {
     hltvId: Number(m?.id ?? 0),
     stageKind: inferStageKind(stageLabel),
@@ -173,14 +180,16 @@ function normalizeMatch(m: any): HltvMatch {
     bracketRound: inferBracketRound(stageLabel),
     teamAHltvId: Number(m?.team1?.id ?? 0) || null,
     teamBHltvId: Number(m?.team2?.id ?? 0) || null,
-    teamAName: m?.team1?.name ?? null,
-    teamBName: m?.team2?.name ?? null,
+    teamAName: aName,
+    teamBName: bName,
+    teamALogo: m?.team1?.logo ?? null,
+    teamBLogo: m?.team2?.logo ?? null,
     scoreA: 0,
     scoreB: 0,
     bestOf: inferBestOf(m?.format?.type ?? m?.format?.name),
     status: m?.live ? "LIVE" : "PENDING",
     startTime: parseDate(m?.date),
-    winnerHltvId: null,
+    winnerName: null,
   };
 }
 
@@ -188,24 +197,26 @@ function normalizeResult(r: any): HltvMatch {
   const stageLabel: string | undefined = r?.event?.name ?? r?.stars?.name ?? r?.format?.name;
   const scoreA = Number(r?.result?.team1 ?? r?.team1?.result ?? 0);
   const scoreB = Number(r?.result?.team2 ?? r?.team2?.result ?? 0);
-  const t1 = Number(r?.team1?.id ?? 0) || null;
-  const t2 = Number(r?.team2?.id ?? 0) || null;
-  const winnerHltvId = scoreA === scoreB ? null : scoreA > scoreB ? t1 : t2;
+  const aName: string | null = r?.team1?.name ?? null;
+  const bName: string | null = r?.team2?.name ?? null;
+  const winnerName = scoreA === scoreB ? null : scoreA > scoreB ? aName : bName;
   return {
     hltvId: Number(r?.id ?? 0),
     stageKind: inferStageKind(stageLabel),
     swissRound: inferSwissRound(stageLabel),
     bracketRound: inferBracketRound(stageLabel),
-    teamAHltvId: t1,
-    teamBHltvId: t2,
-    teamAName: r?.team1?.name ?? null,
-    teamBName: r?.team2?.name ?? null,
+    teamAHltvId: Number(r?.team1?.id ?? 0) || null,
+    teamBHltvId: Number(r?.team2?.id ?? 0) || null,
+    teamAName: aName,
+    teamBName: bName,
+    teamALogo: r?.team1?.logo ?? null,
+    teamBLogo: r?.team2?.logo ?? null,
     scoreA,
     scoreB,
     bestOf: scoreA + scoreB <= 1 ? 1 : 3,
     status: "FINISHED",
     startTime: parseDate(r?.date),
-    winnerHltvId,
+    winnerName,
   };
 }
 

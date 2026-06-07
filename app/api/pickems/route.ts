@@ -9,7 +9,8 @@ export const runtime = "nodejs";
 
 const PickSchema = z.object({
   kind: z.enum(["SWISS_3_0", "SWISS_0_3", "SWISS_ADVANCE", "PLAYOFF_WINNER"]),
-  stageKind: z.enum(["CHALLENGERS", "LEGENDS", "CHAMPIONS"]),
+  // Keep in sync with StageKind in lib/types.ts.
+  stageKind: z.enum(["STAGE_1", "STAGE_2", "STAGE_3", "PLAYOFFS"]),
   teamId: z.string().min(1),
   round: z.number().int().nullable().optional(),
 });

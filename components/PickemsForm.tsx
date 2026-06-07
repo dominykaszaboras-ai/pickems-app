@@ -30,19 +30,21 @@ export function PickemsForm({
   initial: ClientPickem | null;
 }) {
   // Per-stage team rosters are computed server-side from each stage's match
-  // list (see lib/queries.ts). Falls back to the umbrella `tournament.teams`
-  // for stages that have no synced matches yet (e.g. Stage 3 / Playoffs
-  // before they go live), so the form is still usable while waiting on data.
+  // list (see lib/queries.ts). A stage is "unlocked" only once it has at
+  // least one synced match — picks for future stages stay locked until then.
   const stagesByKind = new Map<StageKind, ClientTeam[]>();
   for (const s of tournament.stages) {
-    stagesByKind.set(s.kind, s.teams.length > 0 ? s.teams : tournament.teams);
+    stagesByKind.set(s.kind, s.teams);
   }
-  const teamsFor = (k: StageKind): ClientTeam[] =>
-    stagesByKind.get(k) ?? tournament.teams;
-  // Playoffs picker uses the union of all known teams as a fallback.
-  const playoffTeams = stagesByKind.get("PLAYOFFS")?.length
-    ? (stagesByKind.get("PLAYOFFS") as ClientTeam[])
-    : tournament.teams;
+  const teamsFor = (k: StageKind): ClientTeam[] => stagesByKind.get(k) ?? [];
+  const isUnlocked = (k: StageKind): boolean => (stagesByKind.get(k)?.length ?? 0) > 0;
+  // Friendly "opens after X" copy for locked stages.
+  const lockedReason: Record<StageKind, string> = {
+    STAGE_1: "Stage 1 hasn't been synced yet.",
+    STAGE_2: "Unlocks once Stage 2 starts.",
+    STAGE_3: "Unlocks once Stage 3 starts.",
+    PLAYOFFS: "Unlocks once Playoffs start.",
+  };
 
   function pickedOf(stage: StageKind): SwissPicks {
     const inStage = (initial?.picks ?? []).filter((p) => p.stageKind === stage);
@@ -107,16 +109,28 @@ export function PickemsForm({
 
   return (
     <div className="flex flex-col gap-10">
-      {SWISS_STAGE_KINDS.map((kind) => (
-        <SwissPicker
-          key={kind}
-          title={STAGE_LABEL[kind] + " (Swiss)"}
-          teams={teamsFor(kind)}
-          picks={swiss[kind]}
-          setPicks={setSwissFor(kind)}
-        />
-      ))}
-      <PlayoffsPicker teams={playoffTeams} picks={playoffs} setPicks={setPlayoffs} />
+      {SWISS_STAGE_KINDS.map((kind) =>
+        isUnlocked(kind) ? (
+          <SwissPicker
+            key={kind}
+            title={STAGE_LABEL[kind] + " (Swiss)"}
+            teams={teamsFor(kind)}
+            picks={swiss[kind]}
+            setPicks={setSwissFor(kind)}
+          />
+        ) : (
+          <LockedStage
+            key={kind}
+            title={STAGE_LABEL[kind] + " (Swiss)"}
+            reason={lockedReason[kind]}
+          />
+        ),
+      )}
+      {isUnlocked("PLAYOFFS") ? (
+        <PlayoffsPicker teams={teamsFor("PLAYOFFS")} picks={playoffs} setPicks={setPlayoffs} />
+      ) : (
+        <LockedStage title="Playoffs" reason={lockedReason.PLAYOFFS} />
+      )}
 
       <div className="sticky bottom-4 flex items-center justify-between rounded-2xl border border-line bg-panel/90 p-4 backdrop-blur">
         <div className="text-sm text-muted">{allPicks.length} picks selected</div>
@@ -230,6 +244,22 @@ function SwissPicker({
           );
         })}
       </div>
+    </section>
+  );
+}
+
+function LockedStage({ title, reason }: { title: string; reason: string }) {
+  return (
+    <section className="rounded-2xl border border-dashed border-line bg-panel/40 p-5">
+      <div className="flex items-center gap-2 text-muted">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+        </svg>
+        <h2 className="text-lg font-semibold">{title}</h2>
+        <span className="rounded bg-panel2 px-2 py-0.5 text-[10px] uppercase">Locked</span>
+      </div>
+      <p className="mt-2 text-sm text-muted">{reason}</p>
     </section>
   );
 }

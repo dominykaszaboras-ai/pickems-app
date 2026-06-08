@@ -42,12 +42,18 @@ export async function syncTournament(
 ) {
   const snap = await fetchEventSnapshot(hltvEventId);
 
-  // 1. Upsert tournament.
-  const slug = slugify(snap.name) + "-" + hltvEventId;
+  // 1. Upsert tournament. If the umbrella getEvent got Cloudflare-blocked we
+  // fall back to keeping whatever name/dates the row already had, so a
+  // transient block doesn't blank out the tournament record. The
+  // lastSyncedAt update still happens so we can see attempts.
+  const existing = await prisma.tournament.findUnique({ where: { hltvEventId } });
+  const fallbackName = existing?.name ?? `HLTV Event ${hltvEventId}`;
+  const name = snap.name?.startsWith("HLTV Event ") ? fallbackName : snap.name;
+  const slug = slugify(name) + "-" + hltvEventId;
   const tournament = await prisma.tournament.upsert({
     where: { hltvEventId },
     update: {
-      name: snap.name,
+      name,
       slug,
       startDate: snap.startDate ?? undefined,
       endDate: snap.endDate ?? undefined,
@@ -55,7 +61,7 @@ export async function syncTournament(
     },
     create: {
       hltvEventId,
-      name: snap.name,
+      name,
       slug,
       startDate: snap.startDate ?? undefined,
       endDate: snap.endDate ?? undefined,

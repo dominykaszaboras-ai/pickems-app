@@ -109,16 +109,15 @@ function scoreSwissStage(
     let points = 0;
     let correct: boolean | null = null;
 
+    // Cologne-2026-style scoring: 1 point per correct pick, full stop.
     if (pick.kind === "SWISS_ADVANCE") {
       // An ADVANCE pick is correct only if the team finishes 3-1 or 3-2 —
-      // i.e. advanced *without* a 3-0 run. A 3-0 team only satisfies the
-      // SWISS_3_0 pick and is wrong as an ADVANCE pick.
+      // a 3-0 team only satisfies the SWISS_3_0 pick.
       if (s?.status === "ADVANCED" && s.losses >= 1) {
         points = 1;
         correct = true;
       } else if (s?.status === "ADVANCED" && s.losses === 0) {
-        // 3-0 — wrong for an advance pick.
-        correct = false;
+        correct = false; // 3-0 doesn't satisfy ADV
       } else if (s?.status === "ELIMINATED") {
         correct = false;
       } else if (!concluded) {
@@ -126,14 +125,14 @@ function scoreSwissStage(
       }
     } else if (pick.kind === "SWISS_3_0") {
       if (s?.outcome === "QUALIFIED_3_0") {
-        points = 4;
+        points = 1;
         correct = true;
       } else if (s?.status === "ADVANCED" || s?.status === "ELIMINATED") {
         correct = false;
       }
     } else if (pick.kind === "SWISS_0_3") {
       if (s?.outcome === "ELIM_0_3") {
-        points = 4;
+        points = 1;
         correct = true;
       } else if (s?.status === "ADVANCED" || s?.status === "ELIMINATED") {
         correct = false;
@@ -182,8 +181,8 @@ function scorePlayoffs(
     }
   }
 
-  // Points per round: QF=1, SF=2, F=4, Champion (round=4) = +4 bonus.
-  const pointsForRound: Record<number, number> = { 1: 1, 2: 2, 3: 4, 4: 4 };
+  // 1 point per correct playoff pick, all rounds. Matches the swiss scoring.
+  const pointsForRound: Record<number, number> = { 1: 1, 2: 1, 3: 1, 4: 1 };
 
   for (const pick of pickem.picks) {
     if (pick.stageKind !== "PLAYOFFS" || pick.kind !== "PLAYOFF_WINNER") continue;

@@ -69,8 +69,16 @@ export async function fetchTeamLogo(hltvId: number): Promise<string | null> {
 }
 
 export async function fetchEventSnapshot(eventId: number): Promise<HltvEventSnapshot> {
+  // Every HLTV call can independently get Cloudflare-blocked from cloud IPs.
+  // We swallow per-call so one block doesn't kill the whole sync — the
+  // per-stage event calls run regardless and the previous DB state stays
+  // intact for whatever we couldn't refresh this pass.
+
   // 1. Event page — has name/dates and the list of attending teams.
-  const event = (await HLTV.getEvent({ id: eventId })) as any;
+  const event = (await safe(
+    () => HLTV.getEvent({ id: eventId }) as Promise<any>,
+    null as any,
+  )) ?? {};
 
   const teams: HltvTeam[] = (event?.teams ?? []).map((t: any) => ({
     hltvId: Number(t.id ?? t.team?.id ?? 0),

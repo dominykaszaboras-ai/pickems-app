@@ -58,15 +58,27 @@ export function MatchCard({
         match.status === "PENDING" && !isOverridden && "border-line",
       )}
     >
-      <div className="mb-1 flex items-center justify-between px-2 text-[10px] text-muted">
+      <div className="mb-1 flex items-center justify-between gap-2 px-2 text-[10px] text-muted">
         <span>
           {match.bestOf ? `BO${match.bestOf}` : ""}{" "}
           {match.swissRound != null ? `· R${match.swissRound}` : ""}
         </span>
-        <span>
+        <span className="flex items-center gap-2">
           {match.status === "LIVE" && <span className="text-loss">● LIVE</span>}
           {match.status === "PENDING" && isOverridden && <span className="text-accent">SIM</span>}
-          {match.status === "FINISHED" && "Final"}
+          {match.status === "FINISHED" && <span>Final</span>}
+          {match.hltvId && (
+            <a
+              href={`https://www.hltv.org/matches/${match.hltvId}/_`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              title="Open on HLTV"
+              className="rounded px-1 text-muted hover:bg-panel2 hover:text-text"
+            >
+              ↗
+            </a>
+          )}
         </span>
       </div>
       {pickRow(a, match.scoreA)}

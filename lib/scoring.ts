@@ -124,17 +124,21 @@ function scoreSwissStage(
         correct = null;
       }
     } else if (pick.kind === "SWISS_3_0") {
+      // The moment the team has any loss, a 3-0 finish is mathematically
+      // impossible — mark the pick dead immediately rather than waiting
+      // for the stage to conclude.
       if (s?.outcome === "QUALIFIED_3_0") {
         points = 1;
         correct = true;
-      } else if (s?.status === "ADVANCED" || s?.status === "ELIMINATED") {
+      } else if (s && s.losses >= 1) {
         correct = false;
       }
     } else if (pick.kind === "SWISS_0_3") {
+      // Symmetric: any win kills a 0-3 pick.
       if (s?.outcome === "ELIM_0_3") {
         points = 1;
         correct = true;
-      } else if (s?.status === "ADVANCED" || s?.status === "ELIMINATED") {
+      } else if (s && s.wins >= 1) {
         correct = false;
       }
     }

@@ -1,5 +1,5 @@
 "use client";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { ClientPickem, ClientStage, ClientTeam } from "@/lib/types";
 import { effectiveWinner, type ScoreLine, type WinnerOverrides } from "@/lib/scoring";
 import { MatchCard } from "./MatchCard";
@@ -52,12 +52,24 @@ export function PlayoffBracket({
     return m;
   }, [stage.teams]);
 
+  const [collapsed, setCollapsed] = useState(false);
+
   return (
     <section className="rounded-2xl border border-line bg-panel p-4">
-      <h2 className="mb-3 text-lg font-semibold">{stage.name}</h2>
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-lg font-semibold">{stage.name}</h2>
+        <button
+          onClick={() => setCollapsed((c) => !c)}
+          className="rounded border border-line bg-panel2 px-2 py-1 text-xs text-muted hover:text-text"
+          aria-expanded={!collapsed}
+        >
+          {collapsed ? "Show bracket" : "Hide bracket"}
+        </button>
+      </div>
       <div className="mb-4">
         <PickSummary stage={stage} score={score} teamsById={teamsById} />
       </div>
+      {!collapsed && (
       <div className="flex gap-6 overflow-x-auto">
         {rounds.map((col) => (
           <div key={col.round} className="flex min-w-[240px] flex-1 flex-col gap-3">
@@ -81,6 +93,7 @@ export function PlayoffBracket({
           </div>
         ))}
       </div>
+      )}
     </section>
   );
 }

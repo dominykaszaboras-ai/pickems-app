@@ -2,6 +2,7 @@
 import clsx from "clsx";
 import type { ClientMatch } from "@/lib/types";
 import { TeamLogo } from "./TeamLogo";
+import { formatMatchTime } from "@/lib/formatTime";
 
 export function MatchCard({
   match,
@@ -59,9 +60,14 @@ export function MatchCard({
       )}
     >
       <div className="mb-1 flex items-center justify-between gap-2 px-2 text-[10px] text-muted">
-        <span>
-          {match.bestOf ? `BO${match.bestOf}` : ""}{" "}
-          {match.swissRound != null ? `· R${match.swissRound}` : ""}
+        <span className="flex items-center gap-1.5">
+          <span>
+            {match.bestOf ? `BO${match.bestOf}` : ""}
+            {match.swissRound != null ? ` · R${match.swissRound}` : ""}
+          </span>
+          {match.status === "PENDING" && match.startTime && (
+            <span className="text-text">· {formatMatchTime(match.startTime)}</span>
+          )}
         </span>
         <span className="flex items-center gap-2">
           {match.status === "LIVE" && (

@@ -8,6 +8,7 @@ import type { ClientPickem, ClientTournament } from "@/lib/types";
 import { scorePickem, type WinnerOverrides } from "@/lib/scoring";
 import { SwissStage } from "./SwissStage";
 import { PlayoffBracket } from "./PlayoffBracket";
+import { UpcomingSchedule } from "./UpcomingSchedule";
 
 export function BracketView({
   tournament,
@@ -109,6 +110,8 @@ export function BracketView({
           </button>
         </div>
       )}
+
+      <UpcomingSchedule tournament={tournament} />
 
       {swissStages.map((stage) => (
         <SwissStage

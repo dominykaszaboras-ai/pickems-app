@@ -1,0 +1,32 @@
+name: HLTV live sync
+
+# Fast pass — only touches matches currently marked LIVE in the DB or
+# scheduled to start within ±30 min. Cheap to run; safe to crank up the
+# frequency. The "HLTV sync" workflow remains the source of truth for
+# event / team / match roster discovery.
+
+on:
+  schedule:
+    - cron: "*/2 * * * *"   # every 2 minutes
+  workflow_dispatch:
+
+concurrency:
+  group: hltv-live-sync
+  cancel-in-progress: false
+
+jobs:
+  live-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+          cache: "npm"
+      - name: Install deps
+        run: npm ci --no-audit --no-fund
+      - name: Run live sync
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: npm run live-sync

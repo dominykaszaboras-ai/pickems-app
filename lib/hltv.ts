@@ -54,6 +54,59 @@ export interface HltvEventSnapshot {
 
 // --- Public API --------------------------------------------------------------
 
+// Pull the live state of a single match — current map score, live flag,
+// and (if the series just ended) the winner. Used by the fast live-sync
+// pass to refresh in-progress matches every couple of minutes without
+// re-pulling the whole event.
+export interface HltvLiveState {
+  scoreA: number;
+  scoreB: number;
+  status: "PENDING" | "LIVE" | "FINISHED";
+  winnerName: string | null;
+}
+
+export async function fetchMatchLiveState(hltvId: number): Promise<HltvLiveState | null> {
+  try {
+    const m = (await HLTV.getMatch({ id: hltvId })) as any;
+    const status: HltvLiveState["status"] = m?.live
+      ? "LIVE"
+      : m?.status === "Match over" || m?.statusText === "Match over"
+      ? "FINISHED"
+      : m?.maps?.some?.((x: any) => x?.statusText === "Final" || x?.result)
+      ? // Some completed matches show maps[].result but no `live` flag.
+        "FINISHED"
+      : "PENDING";
+
+    // Series score = number of finished maps each side won.
+    let scoreA = 0;
+    let scoreB = 0;
+    const maps: any[] = Array.isArray(m?.maps) ? m.maps : [];
+    for (const mp of maps) {
+      const a = Number(mp?.result?.team1 ?? mp?.team1?.result ?? 0);
+      const b = Number(mp?.result?.team2 ?? mp?.team2?.result ?? 0);
+      if (a > b) scoreA++;
+      else if (b > a) scoreB++;
+    }
+    // Fall back to the top-level result object if maps weren't parseable.
+    if (scoreA === 0 && scoreB === 0) {
+      scoreA = Number(m?.team1?.result ?? m?.result?.team1 ?? 0);
+      scoreB = Number(m?.team2?.result ?? m?.result?.team2 ?? 0);
+    }
+
+    const winnerName =
+      status === "FINISHED" && scoreA !== scoreB
+        ? scoreA > scoreB
+          ? m?.team1?.name ?? null
+          : m?.team2?.name ?? null
+        : null;
+
+    return { scoreA, scoreB, status, winnerName };
+  } catch (e) {
+    console.warn(`[hltv] getMatch(${hltvId}) failed:`, (e as Error).message);
+    return null;
+  }
+}
+
 // Fetch the logo URL for a single team via HLTV.getTeam. The event-list
 // response doesn't include logos, but the team detail endpoint does. We call
 // this lazily during sync — only for teams that don't yet have one stored.

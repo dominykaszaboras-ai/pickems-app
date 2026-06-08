@@ -10,10 +10,70 @@
 //   HLTV_STAGE_EVENTS="STAGE_1:9028,STAGE_2:9029,STAGE_3:9030,PLAYOFFS:9031"
 
 import { prisma } from "./db";
-import { fetchEventSnapshot, fetchStageMatches, fetchTeamLogo } from "./hltv";
+import {
+  fetchEventSnapshot,
+  fetchMatchLiveState,
+  fetchStageMatches,
+  fetchTeamLogo,
+} from "./hltv";
 import type { StageKind } from "./types";
 
 export type StageEventMap = Partial<Record<StageKind, number>>;
+
+// Cheap, frequent live-state refresh. Pulls every match we currently track
+// as LIVE (or PENDING-but-scheduled-to-start-soon), hits HLTV.getMatch for
+// each, and updates scoreA/scoreB/status/winnerId. Designed to run every
+// 2-3 minutes from a dedicated GH Actions workflow.
+export async function syncLiveMatches(): Promise<{
+  inspected: number;
+  updated: number;
+  liveAfter: number;
+}> {
+  const lookaheadMs = 30 * 60 * 1000; // start tracking 30 min before listed time
+  const now = Date.now();
+  const candidates = await prisma.match.findMany({
+    where: {
+      hltvId: { not: null },
+      OR: [
+        { status: "LIVE" },
+        {
+          status: "PENDING",
+          startTime: { gte: new Date(now - lookaheadMs), lte: new Date(now + lookaheadMs) },
+        },
+      ],
+    },
+    include: { teamA: true, teamB: true },
+  });
+
+  let updated = 0;
+  let liveAfter = 0;
+  for (const m of candidates) {
+    if (!m.hltvId) continue;
+    const live = await fetchMatchLiveState(m.hltvId);
+    if (!live) continue;
+
+    // Resolve winner by name -> teamId.
+    let winnerId: string | null = null;
+    if (live.winnerName) {
+      const w = await prisma.team.findUnique({ where: { name: live.winnerName } });
+      if (w) winnerId = w.id;
+    }
+
+    await prisma.match.update({
+      where: { id: m.id },
+      data: {
+        scoreA: live.scoreA,
+        scoreB: live.scoreB,
+        status: live.status,
+        winnerId: live.status === "FINISHED" ? winnerId : null,
+      },
+    });
+    updated++;
+    if (live.status === "LIVE") liveAfter++;
+  }
+
+  return { inspected: candidates.length, updated, liveAfter };
+}
 
 export function parseStageEvents(raw: string | undefined): StageEventMap {
   if (!raw) return {};

@@ -2,7 +2,8 @@
 // Top-level interactive view: Swiss stages + playoff bracket + live pickems score panel.
 // All state lives client-side (simulation overrides are not persisted).
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { ClientPickem, ClientTournament } from "@/lib/types";
 import { scorePickem, type WinnerOverrides } from "@/lib/scoring";
 import { SwissStage } from "./SwissStage";
@@ -15,7 +16,34 @@ export function BracketView({
   tournament: ClientTournament;
   myPickem: ClientPickem | null;
 }) {
+  const router = useRouter();
   const [overrides, setOverrides] = useState<WinnerOverrides>({});
+
+  // Auto-refresh from server while any match is live. Polls /api/last-sync
+  // every 30s and asks Next to re-render when the timestamp advances —
+  // cheap and avoids any websocket plumbing.
+  const liveCount = useMemo(
+    () => tournament.stages.reduce((n, s) => n + s.matches.filter((m) => m.status === "LIVE").length, 0),
+    [tournament],
+  );
+  const lastStamp = useRef<string | null>(tournament.lastSyncedAt);
+  useEffect(() => {
+    if (liveCount === 0) return;
+    const id = setInterval(async () => {
+      try {
+        const r = await fetch("/api/last-sync", { cache: "no-store" });
+        const d = await r.json();
+        const stamp: string | null = d?.lastSyncedAt ?? null;
+        if (stamp && stamp !== lastStamp.current) {
+          lastStamp.current = stamp;
+          router.refresh();
+        }
+      } catch {
+        /* swallow */
+      }
+    }, 30_000);
+    return () => clearInterval(id);
+  }, [liveCount, router]);
 
   function setOverride(matchId: string, teamId: string | null) {
     setOverrides((prev) => {
@@ -57,6 +85,16 @@ export function BracketView({
           </div>
         )}
       </header>
+
+      {liveCount > 0 && (
+        <div className="flex items-center gap-3 rounded-xl border border-loss/40 bg-loss/10 px-4 py-2 text-sm">
+          <span className="flex items-center gap-1.5">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-loss" />
+            <span className="font-semibold text-loss">{liveCount} match{liveCount === 1 ? "" : "es"} live</span>
+          </span>
+          <span className="text-muted">— scores refresh automatically every 30s</span>
+        </div>
+      )}
 
       {Object.keys(overrides).length > 0 && (
         <div className="flex items-center justify-between rounded-xl border border-accent/40 bg-accent/10 px-4 py-2 text-sm">

@@ -64,7 +64,12 @@ export function MatchCard({
           {match.swissRound != null ? `· R${match.swissRound}` : ""}
         </span>
         <span className="flex items-center gap-2">
-          {match.status === "LIVE" && <span className="text-loss">● LIVE</span>}
+          {match.status === "LIVE" && (
+            <span className="flex items-center gap-1 rounded bg-loss/15 px-1.5 py-0.5 text-loss">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-loss" />
+              LIVE
+            </span>
+          )}
           {match.status === "PENDING" && isOverridden && <span className="text-accent">SIM</span>}
           {match.status === "FINISHED" && <span>Final</span>}
           {match.hltvId && (

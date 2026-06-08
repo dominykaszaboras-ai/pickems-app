@@ -77,9 +77,19 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   providers,
   pages: { signIn: "/auth/signin" },
   callbacks: {
+    // Re-read name + image from the DB on every session check so updates
+    // (Steam persona changes, backfilled avatars, etc.) propagate to existing
+    // sessions without forcing users to sign out + sign back in.
     async session({ session, token }) {
-      if (session.user && token.sub) {
-        (session.user as any).id = token.sub;
+      if (!session.user || !token.sub) return session;
+      (session.user as any).id = token.sub;
+      const fresh = await prisma.user.findUnique({
+        where: { id: token.sub },
+        select: { name: true, image: true },
+      });
+      if (fresh) {
+        if (fresh.name) session.user.name = fresh.name;
+        if (fresh.image) session.user.image = fresh.image;
       }
       return session;
     },

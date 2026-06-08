@@ -84,6 +84,7 @@ export interface ClientPickem {
   id: string;
   userId: string;
   userName: string | null;
+  userImage?: string | null;
   tournamentId: string;
   picks: ClientPickemPick[];
 }

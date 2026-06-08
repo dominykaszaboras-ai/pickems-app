@@ -39,7 +39,21 @@ export default async function LeaderboardPage() {
           {rows.map((r, i) => (
             <tr key={r.p.id} className="border-t border-line">
               <td className="px-3 py-2 text-muted">{i + 1}</td>
-              <td className="px-3 py-2">{r.p.userName ?? "Anonymous"}</td>
+              <td className="px-3 py-2">
+                <div className="flex items-center gap-2">
+                  {r.p.userImage && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={r.p.userImage}
+                      alt=""
+                      width={20}
+                      height={20}
+                      className="rounded-full border border-line"
+                    />
+                  )}
+                  <span>{r.p.userName ?? "Anonymous"}</span>
+                </div>
+              </td>
               <td className="px-3 py-2 text-right font-mono">{r.score.byStage.STAGE_1}</td>
               <td className="px-3 py-2 text-right font-mono">{r.score.byStage.STAGE_2}</td>
               <td className="px-3 py-2 text-right font-mono">{r.score.byStage.STAGE_3}</td>

@@ -107,6 +107,7 @@ export async function getAllPickems(tournamentId: string): Promise<ClientPickem[
     id: p.id,
     userId: p.userId,
     userName: p.user.name,
+    userImage: p.user.image,
     tournamentId: p.tournamentId,
     picks: p.picks.map((pp) => ({
       kind: pp.kind as PickKind,

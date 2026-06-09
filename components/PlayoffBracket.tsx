@@ -1,6 +1,6 @@
 "use client";
 import { useMemo, useState } from "react";
-import type { ClientPickem, ClientStage, ClientTeam } from "@/lib/types";
+import { STAGE_LABEL, type ClientPickem, type ClientStage, type ClientTeam } from "@/lib/types";
 import { effectiveWinner, type ScoreLine, type WinnerOverrides } from "@/lib/scoring";
 import { MatchCard } from "./MatchCard";
 import { PickSummary } from "./PickSummary";
@@ -57,7 +57,7 @@ export function PlayoffBracket({
   return (
     <section className="rounded-2xl border border-line bg-panel p-4">
       <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">{stage.name}</h2>
+        <h2 className="text-lg font-semibold">{STAGE_LABEL[stage.kind]}</h2>
         <button
           onClick={() => setCollapsed((c) => !c)}
           className="rounded border border-line bg-panel2 px-2 py-1 text-xs text-muted hover:text-text"

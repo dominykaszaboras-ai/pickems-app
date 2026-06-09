@@ -1,10 +1,11 @@
 "use client";
 import { useMemo, useState } from "react";
-import type { ClientPickem, ClientStage, ClientTeam } from "@/lib/types";
+import { STAGE_LABEL, type ClientPickem, type ClientStage, type ClientTeam } from "@/lib/types";
 import { computeSwissStandings, effectiveWinner, type ScoreLine, type WinnerOverrides } from "@/lib/scoring";
 import { MatchCard } from "./MatchCard";
 import { TeamLogo } from "./TeamLogo";
 import { PickSummary } from "./PickSummary";
+import { SwissPoolView } from "./SwissPoolView";
 
 export function SwissStage({
   stage,
@@ -70,18 +71,36 @@ export function SwissStage({
   }, [stage.teams]);
 
   const [collapsed, setCollapsed] = useState(false);
+  const [view, setView] = useState<"rounds" | "pools">("rounds");
 
   return (
     <section className="rounded-2xl border border-line bg-panel p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">{stage.name}</h2>
-        <button
-          onClick={() => setCollapsed((c) => !c)}
-          className="rounded border border-line bg-panel2 px-2 py-1 text-xs text-muted hover:text-text"
-          aria-expanded={!collapsed}
-        >
-          {collapsed ? "Show matches" : "Hide matches"}
-        </button>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h2 className="text-lg font-semibold">{STAGE_LABEL[stage.kind]} <span className="text-sm font-normal text-muted">(Swiss)</span></h2>
+        <div className="flex items-center gap-2">
+          {/* majors.im-style toggle between rounds and pool layout */}
+          <div className="flex rounded border border-line bg-panel2 p-0.5 text-xs">
+            <button
+              onClick={() => setView("rounds")}
+              className={"rounded px-2 py-0.5 " + (view === "rounds" ? "bg-panel text-text" : "text-muted hover:text-text")}
+            >
+              Rounds
+            </button>
+            <button
+              onClick={() => setView("pools")}
+              className={"rounded px-2 py-0.5 " + (view === "pools" ? "bg-panel text-text" : "text-muted hover:text-text")}
+            >
+              Pools
+            </button>
+          </div>
+          <button
+            onClick={() => setCollapsed((c) => !c)}
+            className="rounded border border-line bg-panel2 px-2 py-1 text-xs text-muted hover:text-text"
+            aria-expanded={!collapsed}
+          >
+            {collapsed ? "Show matches" : "Hide matches"}
+          </button>
+        </div>
       </div>
 
       {/* Your picks first — single source of truth for what scored what */}
@@ -89,7 +108,11 @@ export function SwissStage({
         <PickSummary stage={stage} score={score} teamsById={teamsById} />
       </div>
 
-      {!collapsed && (
+      {!collapsed && view === "pools" && (
+        <SwissPoolView stage={stage} overrides={overrides} pickem={pickem} />
+      )}
+
+      {!collapsed && view === "rounds" && (
       <div className="flex gap-4 overflow-x-auto">
         {rounds.map((col) => (
           <div key={col.round} className="min-w-[220px] flex-1">

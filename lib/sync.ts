@@ -160,7 +160,9 @@ export async function syncTournament(
   for (const kind of ["STAGE_1", "STAGE_2", "STAGE_3", "PLAYOFFS"] as StageKind[]) {
     const stage = await prisma.stage.upsert({
       where: { tournamentId_kind: { tournamentId: tournament.id, kind } },
-      update: {},
+      // Keep the human-readable name in sync with STAGE_NAMES so the UI
+      // never shows stale strings from before the Cologne-2026 rename.
+      update: { name: STAGE_NAMES[kind] },
       create: { tournamentId: tournament.id, kind, name: STAGE_NAMES[kind] },
     });
     stageIdByKind[kind] = stage.id;

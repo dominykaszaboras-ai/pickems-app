@@ -9,6 +9,8 @@ import { scorePickem, type WinnerOverrides } from "@/lib/scoring";
 import { SwissStage } from "./SwissStage";
 import { PlayoffBracket } from "./PlayoffBracket";
 import { UpcomingSchedule } from "./UpcomingSchedule";
+import { TournamentStatus } from "./TournamentStatus";
+import { StageProjection } from "./StageProjection";
 
 export function BracketView({
   tournament,
@@ -111,7 +113,13 @@ export function BracketView({
         </div>
       )}
 
+      <TournamentStatus tournament={tournament} />
+
       <UpcomingSchedule tournament={tournament} />
+
+      {/* Stage 3 preview — only renders when Stage 2 is concluded AND Stage 3
+          has no real matches yet. Auto-hides as soon as real data arrives. */}
+      <StageProjection tournament={tournament} forStage="STAGE_3" sourceStage="STAGE_2" />
 
       {swissStages.map((stage) => (
         <SwissStage

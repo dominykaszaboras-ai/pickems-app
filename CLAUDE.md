@@ -214,7 +214,7 @@ when the `lastSyncedAt` timestamp advances. End-to-end latency from
 npm run dev
 
 # Local sync against prod DB (residential IP bypasses Cloudflare)
-DATABASE_URL="postgresql://postgres:dfjeohBeOHHKLTYjwbIHKTJKDEVgCnwl@acela.proxy.rlwy.net:46540/railway" \
+DATABASE_URL="$(railway variables --kv | grep '^DATABASE_PUBLIC_URL=' | cut -d= -f2-)" \
   HLTV_EVENT_ID=8301 HLTV_STAGE_EVENTS="STAGE_1:9028,STAGE_2:9029" \
   npx tsx scripts/sync.ts
 
@@ -237,7 +237,9 @@ railway variables --set "KEY=value"
 railway variables --kv | grep KEY
 
 # Postgres public proxy (use locally; internal URL only works inside Railway)
-postgresql://postgres:dfjeohBeOHHKLTYjwbIHKTJKDEVgCnwl@acela.proxy.rlwy.net:46540/railway
+# Pull the live URL from Railway instead of hardcoding it here:
+#   railway variables --kv | grep '^DATABASE_PUBLIC_URL='
+# Host/port: acela.proxy.rlwy.net:46540 (password rotates — don't paste it into docs)
 ```
 
 ## Workflow conventions

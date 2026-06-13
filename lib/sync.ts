@@ -192,6 +192,31 @@ export async function syncTournament(
     const teamBId = await ensureTeamByName(m.teamBName, m.teamBHltvId, m.teamBLogo, teamIdByName);
     const winnerId = m.winnerName ? teamIdByName.get(m.winnerName.toLowerCase()) ?? null : null;
 
+    // Ghost adoption: if the daily Liquipedia schedule sync already wrote a
+    // PENDING row for these two teams + stage with no hltvId, claim it by
+    // stamping the now-known hltvId on it. That way the upsert below finds
+    // the same row instead of creating a duplicate.
+    if (teamAId && teamBId) {
+      const ghost = await prisma.match.findFirst({
+        where: {
+          hltvId: null,
+          stageId: stageIdByKind[stageKind],
+          status: "PENDING",
+          OR: [
+            { teamAId, teamBId },
+            { teamAId: teamBId, teamBId: teamAId },
+          ],
+        },
+        select: { id: true },
+      });
+      if (ghost) {
+        await prisma.match.update({
+          where: { id: ghost.id },
+          data: { hltvId: m.hltvId },
+        });
+      }
+    }
+
     await prisma.match.upsert({
       where: { hltvId: m.hltvId },
       update: {

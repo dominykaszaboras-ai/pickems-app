@@ -1,0 +1,33 @@
+name: Liquipedia schedule sync
+
+# Once-a-day fetch of upcoming match schedules from Liquipedia.
+# Why daily: Liquipedia's usage policy asks for low request rates and
+# encourages caching; tournament schedules don't change every minute. The
+# regular `sync.yml` workflow (every 10 min) keeps the play-by-play data
+# fresh from HLTV — this just backfills upcoming matches HLTV hasn't
+# surfaced yet.
+
+on:
+  schedule:
+    # 05:30 UTC daily — well before EU prime time so the schedule is
+    # ready for morning visitors.
+    - cron: "30 5 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  schedule-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      HLTV_EVENT_ID: ${{ secrets.HLTV_EVENT_ID }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install deps
+        run: npm install --no-audit --no-fund
+      - name: Run schedule sync
+        run: npm run sync-schedule

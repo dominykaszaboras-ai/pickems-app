@@ -16,6 +16,7 @@
     "db:studio": "prisma studio",
     "sync": "tsx scripts/sync.ts",
     "live-sync": "tsx scripts/live-sync.ts",
+    "sync-schedule": "tsx scripts/sync-schedule.ts",
     "start:railway": "prisma db push --accept-data-loss && next start"
   },
   "dependencies": {

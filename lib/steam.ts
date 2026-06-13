@@ -39,9 +39,36 @@ export function buildRedirectUrl(returnTo: string, realm: string): string {
 }
 
 // --- Step 2: verify the callback by asking Steam to confirm ----------------
-export async function verifyCallback(searchParams: URLSearchParams): Promise<string | null> {
-  // Echo every openid.* param back to Steam, with mode swapped to
-  // check_authentication. Steam responds either is_valid:true or :false.
+//
+// `expectedReturnHost` is the host we expect to see in `openid.return_to`.
+// Pass the host of the actual callback request URL so we can confirm Steam
+// echoed back a return_to that points at us — defends against an attacker
+// who manages to capture a valid OpenID response from a different relying
+// party and replays it against our callback.
+export async function verifyCallback(
+  searchParams: URLSearchParams,
+  expectedReturnHost: string | null = null,
+): Promise<string | null> {
+  // 1. Sanity-check the return_to before talking to Steam — if it doesn't
+  //    name us, this isn't our response.
+  if (expectedReturnHost) {
+    const rawReturnTo = searchParams.get("openid.return_to") ?? "";
+    try {
+      const rt = new URL(rawReturnTo);
+      if (rt.host !== expectedReturnHost) return null;
+    } catch {
+      return null;
+    }
+  }
+
+  // 2. Confirm `openid.claimed_id` was actually signed. Without this an
+  //    attacker could substitute an arbitrary claimed_id while keeping a
+  //    legitimate signature over the remaining (unsigned) fields.
+  const signed = (searchParams.get("openid.signed") ?? "").split(",");
+  if (!signed.includes("claimed_id")) return null;
+
+  // 3. Echo every openid.* param back to Steam, with mode swapped to
+  //    check_authentication. Steam responds either is_valid:true or :false.
   const body = new URLSearchParams();
   for (const [k, v] of searchParams.entries()) {
     if (k.startsWith("openid.")) body.append(k, v);

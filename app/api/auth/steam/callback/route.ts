@@ -13,7 +13,10 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
 
   // 1. Ask Steam to confirm the response is genuine (mode=check_authentication).
-  const steamId = await verifyCallback(url.searchParams);
+  //    We also verify openid.return_to names this host, so a Steam OpenID
+  //    response captured against a different relying party can't be replayed
+  //    against our callback.
+  const steamId = await verifyCallback(url.searchParams, url.host);
   if (!steamId) {
     const back = new URL("/auth/signin?error=steam_verify_failed", url.origin);
     return NextResponse.redirect(back);

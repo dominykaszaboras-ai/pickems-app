@@ -7,6 +7,7 @@ import GitHub from "next-auth/providers/github";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import bcrypt from "bcryptjs";
 import { prisma } from "./db";
+import { rateLimit } from "./rateLimit";
 import { fetchSteamProfile, verifySignedSteamId } from "./steam";
 
 // Explicit type annotation prevents TS from narrowing the array to
@@ -22,6 +23,18 @@ const providers: NextAuthConfig["providers"] = [
       const email = String(creds?.email ?? "").toLowerCase().trim();
       const password = String(creds?.password ?? "");
       if (!email || !password) return null;
+
+      // Per-email throttle to make online password brute-force impractical.
+      // NextAuth's authorize() doesn't expose the request, so we can't also
+      // limit by IP here — the per-email window is the realistic defense.
+      // Allows ~10 attempts per 15 minutes per email.
+      const limit = rateLimit({
+        key: `login:email:${email}`,
+        limit: 10,
+        windowMs: 15 * 60 * 1000,
+      });
+      if (!limit.ok) return null;
+
       const user = await prisma.user.findUnique({ where: { email } });
       if (!user?.passwordHash) return null;
       const ok = await bcrypt.compare(password, user.passwordHash);

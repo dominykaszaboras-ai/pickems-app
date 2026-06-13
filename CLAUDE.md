@@ -270,6 +270,21 @@ railway variables --kv | grep KEY
 - [ ] (Cosmetic) Add a "Pool view as default for concluded stages"
   preference — right now Rounds is always the default.
 
+## Security posture (don't regress)
+
+Layered protections live in:
+
+- `lib/rateLimit.ts` — in-memory limiter + `clientIp(req)` + `isSameOrigin(req)` (same-origin gate for state-changing POSTs).
+- `app/api/sync/route.ts` — `CRON_SECRET` check via `timingSafeEqual`; **fails closed** when the env var is missing.
+- `app/api/signup/route.ts` — `isSameOrigin` gate + 5 signups / hour / IP.
+- `app/api/pickems/route.ts` — `isSameOrigin` gate + session auth + `teamId` validated against `TournamentTeam`.
+- `app/api/refresh/route.ts` — `isSameOrigin` gate + session auth + per-user throttle (6/min) + global 20s dispatch throttle.
+- `lib/auth.ts` — credentials `authorize` is rate-limited per email (10 attempts / 15 min) to make online brute force impractical.
+- `lib/steam.ts:verifyCallback` — validates `openid.return_to` host, requires `openid.signed` to include `claimed_id`, then asks Steam for `check_authentication`.
+- `next.config.mjs` — sets `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `Strict-Transport-Security` on all routes.
+
+If you ever scale beyond a single Railway replica, move the in-memory limiter + the `lastDispatchAt` in `/api/refresh` into Postgres or Redis — otherwise each replica's counter is independent.
+
 ## Things to NOT do
 
 - Don't bump Prisma to 7.x.
@@ -280,3 +295,11 @@ railway variables --kv | grep KEY
 - Don't sync from Railway runtime — only GH Actions runners get through Cloudflare.
 - Don't trust `inferStageKind` heuristic alone — per-stage event IDs are
   the source of truth via `fetchStageMatches(eventId, stageKind)`.
+- Don't accept `npm audit fix --force`'s suggestion to "fix" `hltv` — its
+  recommendation is to downgrade to 1.1.0, which loses every API we use
+  for syncing. The remaining transitive `socket.io-client` advisory only
+  affects the live-streaming code path inside the scraper that we don't call.
+- Don't drop the `isSameOrigin(req)` gate from any state-changing POST
+  route; it's our minimum CSRF defense (we don't issue CSRF tokens).
+- Don't relax the credentials per-email rate limit below ~10/15min — that's
+  what keeps online password brute force expensive.

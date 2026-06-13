@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { isSameOrigin } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 
@@ -11,16 +12,20 @@ const PickSchema = z.object({
   kind: z.enum(["SWISS_3_0", "SWISS_0_3", "SWISS_ADVANCE", "PLAYOFF_WINNER"]),
   // Keep in sync with StageKind in lib/types.ts.
   stageKind: z.enum(["STAGE_1", "STAGE_2", "STAGE_3", "PLAYOFFS"]),
-  teamId: z.string().min(1),
-  round: z.number().int().nullable().optional(),
+  teamId: z.string().min(1).max(64),
+  round: z.number().int().min(1).max(10).nullable().optional(),
 });
 
 const Body = z.object({
-  tournamentId: z.string().min(1),
+  tournamentId: z.string().min(1).max(64),
   picks: z.array(PickSchema).max(200),
 });
 
 export async function POST(req: NextRequest) {
+  if (!isSameOrigin(req)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const session = await auth();
   const userId = (session?.user as any)?.id as string | undefined;
   if (!userId) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
@@ -40,6 +45,24 @@ export async function POST(req: NextRequest) {
     });
     if (existing?.lockedAt) {
       return NextResponse.json({ error: "Pickems are locked" }, { status: 423 });
+    }
+  }
+
+  // Validate teamId values against the tournament's roster so a client can't
+  // submit picks for teams that aren't actually in this tournament.
+  const submittedTeamIds = Array.from(new Set(picks.map((p) => p.teamId)));
+  if (submittedTeamIds.length > 0) {
+    const allowed = await prisma.tournamentTeam.findMany({
+      where: { tournamentId, teamId: { in: submittedTeamIds } },
+      select: { teamId: true },
+    });
+    const allowedSet = new Set(allowed.map((t) => t.teamId));
+    const unknown = submittedTeamIds.filter((id) => !allowedSet.has(id));
+    if (unknown.length > 0) {
+      return NextResponse.json(
+        { error: "Pick references team(s) not in this tournament" },
+        { status: 400 },
+      );
     }
   }
 

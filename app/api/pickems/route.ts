@@ -48,15 +48,27 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Validate teamId values against the tournament's roster so a client can't
-  // submit picks for teams that aren't actually in this tournament.
+  // Validate teamId values against teams that have ever been associated with
+  // this tournament. "Associated" means either currently on the umbrella
+  // roster (TournamentTeam) OR has played at least one match in any of the
+  // tournament's stages. The latter matters for Major formats where HLTV's
+  // umbrella event roster shrinks as teams are eliminated — without it, a
+  // pickem save would reject perfectly valid Stage 1 / Stage 2 picks for
+  // teams no longer listed on the umbrella event.
   const submittedTeamIds = Array.from(new Set(picks.map((p) => p.teamId)));
   if (submittedTeamIds.length > 0) {
-    const allowed = await prisma.tournamentTeam.findMany({
-      where: { tournamentId, teamId: { in: submittedTeamIds } },
-      select: { teamId: true },
+    const allowed = await prisma.team.findMany({
+      where: {
+        id: { in: submittedTeamIds },
+        OR: [
+          { tournaments: { some: { tournamentId } } },
+          { matchesA: { some: { stage: { tournamentId } } } },
+          { matchesB: { some: { stage: { tournamentId } } } },
+        ],
+      },
+      select: { id: true },
     });
-    const allowedSet = new Set(allowed.map((t) => t.teamId));
+    const allowedSet = new Set(allowed.map((t) => t.id));
     const unknown = submittedTeamIds.filter((id) => !allowedSet.has(id));
     if (unknown.length > 0) {
       return NextResponse.json(

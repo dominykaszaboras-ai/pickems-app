@@ -70,7 +70,9 @@ export function SwissStage({
     return m;
   }, [stage.teams]);
 
-  const [collapsed, setCollapsed] = useState(false);
+  // Default to "matches hidden" so the page lands on the at-a-glance summary
+  // (picks + standings) and users opt-in to the match grid.
+  const [collapsed, setCollapsed] = useState(true);
   const [view, setView] = useState<"rounds" | "pools">("rounds");
 
   return (

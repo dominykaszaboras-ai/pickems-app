@@ -7,9 +7,50 @@
 // matches are live or upcoming, users still see *why* (e.g. "Stage 3 not
 // synced yet — add its HLTV event id to HLTV_STAGE_EVENTS").
 
-import { STAGE_LABEL, SWISS_STAGE_KINDS, type ClientTournament, type StageKind } from "@/lib/types";
+import {
+  STAGE_LABEL,
+  SWISS_STAGE_KINDS,
+  type ClientStage,
+  type ClientTournament,
+  type StageKind,
+} from "@/lib/types";
 
 const ALL: StageKind[] = [...SWISS_STAGE_KINDS, "PLAYOFFS"];
+
+// A Swiss stage at Major scale is concluded when every team that's played has
+// either 3 wins (qualified) or 3 losses (eliminated). Just checking
+// `finished === total` is too eager: between rounds, HLTV often has zero
+// LIVE/PENDING matches on its event feed while later rounds simply haven't
+// been published yet, which made completed rounds 1 + 2 look like the entire
+// stage was over.
+function isSwissStageConcluded(stage: ClientStage): boolean {
+  const records = new Map<string, { wins: number; losses: number }>();
+  const seed = (id: string) => {
+    if (!records.has(id)) records.set(id, { wins: 0, losses: 0 });
+    return records.get(id)!;
+  };
+  // Pre-seed every roster team — a team that hasn't played at all clearly
+  // isn't decided yet (which the "wins/losses >= 3" check below also catches,
+  // but seeding makes the intent explicit and protects against stages with
+  // zero matches).
+  for (const t of stage.teams) seed(t.id);
+
+  for (const m of stage.matches) {
+    if (m.status !== "FINISHED" || !m.winnerId) continue;
+    const aId = m.teamA?.id ?? null;
+    const bId = m.teamB?.id ?? null;
+    if (!aId || !bId) continue;
+    const loserId = m.winnerId === aId ? bId : aId;
+    seed(m.winnerId).wins++;
+    seed(loserId).losses++;
+  }
+
+  if (records.size === 0) return false;
+  for (const r of records.values()) {
+    if (r.wins < 3 && r.losses < 3) return false;
+  }
+  return true;
+}
 
 export function TournamentStatus({ tournament }: { tournament: ClientTournament }) {
   const stages = new Map(tournament.stages.map((s) => [s.kind, s]));
@@ -25,6 +66,15 @@ export function TournamentStatus({ tournament }: { tournament: ClientTournament 
           const live = stage?.matches.filter((m) => m.status === "LIVE").length ?? 0;
           const pending = stage?.matches.filter((m) => m.status === "PENDING").length ?? 0;
 
+          // A Swiss stage is concluded when every team is decided (3w or 3l);
+          // a playoff stage is concluded when every scheduled match has run.
+          const isSwiss = (SWISS_STAGE_KINDS as readonly StageKind[]).includes(kind);
+          const concluded = stage
+            ? isSwiss
+              ? isSwissStageConcluded(stage)
+              : total > 0 && finished === total
+            : false;
+
           let statusLabel: string;
           let statusClass = "text-muted";
           if (total === 0) {
@@ -36,7 +86,7 @@ export function TournamentStatus({ tournament }: { tournament: ClientTournament 
           } else if (pending > 0) {
             statusLabel = `${pending} upcoming`;
             statusClass = "text-accent";
-          } else if (finished === total) {
+          } else if (concluded) {
             statusLabel = "concluded";
             statusClass = "text-win";
           } else {
@@ -60,9 +110,9 @@ export function TournamentStatus({ tournament }: { tournament: ClientTournament 
       {tournament.stages.every((s) => s.matches.length === 0 || s.matches.every((m) => m.status === "FINISHED")) && (
         <p className="mt-3 text-xs text-muted">
           No live or upcoming matches right now. When HLTV publishes the next
-          stage's schedule, it'll show up here and on the bracket automatically.
+          stage&apos;s schedule, it&apos;ll show up here and on the bracket automatically.
           {tournament.stages.find((s) => s.kind === "STAGE_3")?.matches.length === 0 && (
-            <> Stage 3 isn't wired up yet — add its HLTV event id to <code>HLTV_STAGE_EVENTS</code> when known.</>
+            <> Stage 3 isn&apos;t wired up yet — add its HLTV event id to <code>HLTV_STAGE_EVENTS</code> when known.</>
           )}
         </p>
       )}

@@ -47,6 +47,10 @@ export interface ClientMatch {
   status: MatchStatus;
   startTime: string | null;
   winnerId: string | null;
+  // Per-match stream overrides. Usually null — the front-end falls back to
+  // ClientTournament.twitchChannel / youtubeChannel for the default broadcast.
+  twitchUrl: string | null;
+  youtubeUrl: string | null;
 }
 
 export interface ClientStage {
@@ -69,6 +73,12 @@ export interface ClientTournament {
   startDate: string | null;
   endDate: string | null;
   lastSyncedAt: string | null;
+  // Main broadcast channels for the whole tournament. Drive the "Watch"
+  // buttons + Twitch embed on /bracket. Plain channel names (no leading @
+  // or full URL) so the UI builds the correct twitch.tv / youtube.com URL
+  // and (for Twitch) the iframe `channel` parameter.
+  twitchChannel: string | null;
+  youtubeChannel: string | null;
   teams: ClientTeam[];
   stages: ClientStage[];
 }

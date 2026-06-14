@@ -5,6 +5,7 @@
 
 import type { ClientMatch, ClientTournament } from "@/lib/types";
 import { dayKey, formatMatchTime, hhmm } from "@/lib/formatTime";
+import { resolveWatchLinks } from "@/lib/streams";
 import { TeamLogo } from "./TeamLogo";
 import Link from "next/link";
 
@@ -65,6 +66,7 @@ export function UpcomingSchedule({ tournament }: { tournament: ClientTournament 
                   <span className="flex-1 text-right text-[10px] text-muted">
                     {m.stageName} · BO{m.bestOf || 1} · {formatMatchTime(m.startTime)}
                   </span>
+                  <ScheduleWatchButtons match={m} tournament={tournament} />
                   {m.hltvId && (
                     <Link
                       href={`https://www.hltv.org/matches/${m.hltvId}/_`}
@@ -82,5 +84,44 @@ export function UpcomingSchedule({ tournament }: { tournament: ClientTournament 
         ))}
       </div>
     </section>
+  );
+}
+
+// Schedule-row variant of the stream buttons. Same idea as the per-match
+// pair in MatchCard but condensed to fit the schedule's tight row layout.
+function ScheduleWatchButtons({
+  match,
+  tournament,
+}: {
+  match: ClientMatch;
+  tournament: ClientTournament;
+}) {
+  const { twitchUrl, youtubeUrl } = resolveWatchLinks(match, tournament);
+  if (!twitchUrl && !youtubeUrl) return null;
+  return (
+    <span className="flex items-center gap-0.5">
+      {twitchUrl && (
+        <Link
+          href={twitchUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Watch on Twitch"
+          className="rounded px-1 text-[10px] font-semibold text-muted hover:bg-purple-500/15 hover:text-purple-300"
+        >
+          TW
+        </Link>
+      )}
+      {youtubeUrl && (
+        <Link
+          href={youtubeUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Watch on YouTube"
+          className="rounded px-1 text-[10px] font-semibold text-muted hover:bg-red-500/15 hover:text-red-400"
+        >
+          YT
+        </Link>
+      )}
+    </span>
   );
 }

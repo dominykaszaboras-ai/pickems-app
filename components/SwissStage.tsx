@@ -1,6 +1,6 @@
 "use client";
 import { useMemo, useState } from "react";
-import { STAGE_LABEL, type ClientPickem, type ClientStage, type ClientTeam } from "@/lib/types";
+import { STAGE_LABEL, type ClientPickem, type ClientStage, type ClientTeam, type ClientTournament } from "@/lib/types";
 import { computeSwissStandings, effectiveWinner, type ScoreLine, type WinnerOverrides } from "@/lib/scoring";
 import { MatchCard } from "./MatchCard";
 import { TeamLogo } from "./TeamLogo";
@@ -13,12 +13,14 @@ export function SwissStage({
   setOverride,
   pickem,
   score,
+  tournament,
 }: {
   stage: ClientStage;
   overrides: WinnerOverrides;
   setOverride: (matchId: string, teamId: string | null) => void;
   pickem: ClientPickem | null;
   score: ScoreLine | null;
+  tournament?: ClientTournament;
 }) {
   // Group matches by swissRound for column display.
   const rounds = useMemo(() => {
@@ -127,6 +129,7 @@ export function SwissStage({
                   effectiveWinnerId={effectiveWinner(m, overrides)}
                   onPick={setOverride}
                   pickHints={hints}
+                  tournament={tournament}
                 />
               ))}
             </div>

@@ -21,6 +21,11 @@ export interface LiquipediaMatch {
   teamBName: string | null;
   bestOf: number;
   stageKind: StageKind;
+  // Direct stream URLs (resolved from Liquipedia's `Special:Stream/<svc>/<slug>`
+  // redirects to the actual Twitch / YouTube URL). null when Liquipedia
+  // didn't list a stream button for the match.
+  twitchUrl: string | null;
+  youtubeUrl: string | null;
 }
 
 // Each entry maps a Major stage to its Liquipedia page slug under
@@ -33,6 +38,10 @@ export const COLOGNE_2026_LIQUIPEDIA: LiquipediaStageMap = {
   STAGE_3: "Intel_Extreme_Masters/2026/Cologne/Stage_3",
   PLAYOFFS: "Intel_Extreme_Masters/2026/Cologne/Playoffs",
 };
+
+// Umbrella tournament page slug for the broadcast channel lookup. Update
+// alongside HLTV_EVENT_ID when a new Major comes around.
+export const COLOGNE_2026_LIQUIPEDIA_UMBRELLA = "Intel_Extreme_Masters/2026/Cologne";
 
 const API_BASE = "https://liquipedia.net/counterstrike/api.php";
 const USER_AGENT =
@@ -102,12 +111,16 @@ export function parseLiquipediaMatches(html: string, stageKind: StageKind): Liqu
     const teamNames = collectTeamNames(block);
     if (teamNames.length < 2) continue;
 
+    const { twitchUrl, youtubeUrl } = extractStreamUrls(block);
+
     matches.push({
       startTime: new Date(epoch * 1000),
       teamAName: cleanTeamName(teamNames[0]),
       teamBName: cleanTeamName(teamNames[1]),
       bestOf: inferBestOf(block),
       stageKind,
+      twitchUrl,
+      youtubeUrl,
     });
   }
 
@@ -206,12 +219,81 @@ function cleanTeamName(name: string | null | undefined): string | null {
     .trim() || null;
 }
 
+// Liquipedia stream slugs come back as `/counterstrike/Special:Stream/<svc>/<slug>`.
+// The <slug> is Liquipedia's wiki name for the channel page, which is usually a
+// simple translation of the Twitch/YouTube handle. We turn it into a direct
+// twitch.tv / youtube.com URL so the user lands on the actual stream instead
+// of a Liquipedia redirect page (which is short-lived and ad-laden).
+function extractStreamUrls(block: string): { twitchUrl: string | null; youtubeUrl: string | null } {
+  let twitchUrl: string | null = null;
+  let youtubeUrl: string | null = null;
+
+  const re = /href=["']\/counterstrike\/Special:Stream\/(twitch|youtube)\/([^"'\/#?]+)["']/gi;
+  let r: RegExpExecArray | null;
+  while ((r = re.exec(block)) !== null) {
+    const svc = r[1].toLowerCase();
+    const slug = decodeURIComponent(r[2]);
+    if (svc === "twitch" && !twitchUrl) {
+      twitchUrl = `https://www.twitch.tv/${twitchHandleFromSlug(slug)}`;
+    } else if (svc === "youtube" && !youtubeUrl) {
+      youtubeUrl = `https://www.youtube.com/@${youtubeHandleFromSlug(slug)}/live`;
+    }
+  }
+
+  return { twitchUrl, youtubeUrl };
+}
+
+// Liquipedia stores the Twitch channel as a wiki page slug (e.g.
+// "ESL_Counter-Strike"). Twitch usernames are lowercased ASCII with no
+// hyphens. Most translations are just "lowercase + drop punctuation".
+function twitchHandleFromSlug(slug: string): string {
+  return slug.replace(/[-_]/g, "").toLowerCase();
+}
+
+// YouTube handles are usually ASCII-only too; the Liquipedia slug is the
+// channel's @handle without the @. We tolerate variations by trimming.
+function youtubeHandleFromSlug(slug: string): string {
+  return slug.replace(/^@/, "").replace(/[_-]/g, "").trim();
+}
+
 function inferBestOf(window: string): number {
   // Liquipedia labels series formats like "Bo3", "BO5", "Best of 3".
   if (/best\s*of\s*5|\bbo\s*5\b/i.test(window)) return 5;
   if (/best\s*of\s*3|\bbo\s*3\b/i.test(window)) return 3;
   if (/best\s*of\s*1|\bbo\s*1\b/i.test(window)) return 1;
   return 3; // Cologne Stage 2/3 + Playoffs are Bo3 by default.
+}
+
+// Pull the main broadcast channels from the umbrella tournament page.
+// Per-match stream buttons aren't reliably populated on Liquipedia (only
+// when broadcast metadata happens to be filled in for a given match), but
+// the umbrella page's external-links sidebar lists the main Twitch / YouTube
+// channels for the whole Major. That covers every match for our use case.
+//
+// `pageSlug` is the wiki page of the tournament itself, e.g.
+//   "Intel_Extreme_Masters/2026/Cologne"
+export async function fetchTournamentBroadcasts(pageSlug: string): Promise<{
+  twitchChannel: string | null;
+  youtubeChannel: string | null;
+}> {
+  const html = await fetchPageHtml(pageSlug);
+  if (!html) return { twitchChannel: null, youtubeChannel: null };
+
+  // Liquipedia external-links template uses anchors of the form
+  //   <a href="https://www.twitch.tv/ESLCS" rel="nofollow" class="external">
+  //   <a href="https://www.youtube.com/ESLCS" rel="nofollow" class="external">
+  // We pick the first match for each service. Anything past the first is
+  // usually a regional re-broadcast (Russian / German / etc.) — those are
+  // valid but the English/EN main is what we want by default.
+  const twitchMatch = html.match(/href=["']https?:\/\/(?:www\.)?twitch\.tv\/([A-Za-z0-9_-]{2,40})/i);
+  const youtubeMatch = html.match(
+    /href=["']https?:\/\/(?:www\.)?youtube\.com\/(?:@)?([A-Za-z0-9_-]{2,40})/i,
+  );
+
+  return {
+    twitchChannel: twitchMatch?.[1] ?? null,
+    youtubeChannel: youtubeMatch?.[1] ?? null,
+  };
 }
 
 export async function fetchSchedule(stages: LiquipediaStageMap): Promise<LiquipediaMatch[]> {

@@ -41,6 +41,8 @@ export async function getActiveTournament(): Promise<ClientTournament | null> {
           status: m.status as ClientMatch["status"],
           startTime: m.startTime?.toISOString() ?? null,
           winnerId: m.winnerId,
+          twitchUrl: m.twitchUrl,
+          youtubeUrl: m.youtubeUrl,
         }),
       );
 
@@ -70,6 +72,8 @@ export async function getActiveTournament(): Promise<ClientTournament | null> {
     startDate: t.startDate?.toISOString() ?? null,
     endDate: t.endDate?.toISOString() ?? null,
     lastSyncedAt: t.lastSyncedAt?.toISOString() ?? null,
+    twitchChannel: t.twitchChannel,
+    youtubeChannel: t.youtubeChannel,
     teams: t.teams.map((tt) => toTeam(tt.team)),
     stages,
   };

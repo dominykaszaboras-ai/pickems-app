@@ -71,6 +71,12 @@ model Tournament {
   endDate       DateTime?
   // JSON snapshot of HLTV event meta (location, prize, etc.)
   meta          String?
+  // Main broadcast channels for the tournament. Pulled from Liquipedia's
+  // umbrella event page on the daily schedule sync. Plain channel handles,
+  // not URLs — the front-end builds twitch.tv/<x> and youtube.com/@<x> at
+  // render time so it can serve embeds and links without extra parsing.
+  twitchChannel  String?
+  youtubeChannel String?
   stages        Stage[]
   teams         TournamentTeam[]
   pickems       Pickem[]
@@ -138,6 +144,13 @@ model Match {
   status       String   @default("PENDING")
   startTime    DateTime?
   winnerId     String?
+  // Stream URLs for the broadcast carrying this match. Populated by the
+  // daily Liquipedia schedule sync — Liquipedia exposes per-match Twitch +
+  // YouTube buttons keyed by channel slug. Stored as the canonical
+  // Twitch/YouTube URL so the front-end can link or embed directly without
+  // a second round-trip.
+  twitchUrl    String?
+  youtubeUrl   String?
   // For Swiss matches: did this match decide a 3-0 (elimination=false, qualified=true) or 0-3 ?
   swissContext String?  // e.g. "QUALIFY_3_0", "ELIM_0_3", "DECIDER", "INITIAL"
   stage        Stage    @relation(fields: [stageId], references: [id], onDelete: Cascade)

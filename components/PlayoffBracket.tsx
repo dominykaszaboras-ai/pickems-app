@@ -1,6 +1,6 @@
 "use client";
 import { useMemo, useState } from "react";
-import { STAGE_LABEL, type ClientPickem, type ClientStage, type ClientTeam } from "@/lib/types";
+import { STAGE_LABEL, type ClientPickem, type ClientStage, type ClientTeam, type ClientTournament } from "@/lib/types";
 import { effectiveWinner, type ScoreLine, type WinnerOverrides } from "@/lib/scoring";
 import { MatchCard } from "./MatchCard";
 import { PickSummary } from "./PickSummary";
@@ -17,12 +17,14 @@ export function PlayoffBracket({
   setOverride,
   pickem,
   score,
+  tournament,
 }: {
   stage: ClientStage;
   overrides: WinnerOverrides;
   setOverride: (matchId: string, teamId: string | null) => void;
   pickem: ClientPickem | null;
   score: ScoreLine | null;
+  tournament?: ClientTournament;
 }) {
   const rounds = useMemo(() => {
     const map: Record<number, typeof stage.matches> = {};
@@ -87,6 +89,7 @@ export function PlayoffBracket({
                   effectiveWinnerId={effectiveWinner(m, overrides)}
                   onPick={setOverride}
                   pickHints={hintByRound[col.round]}
+                  tournament={tournament}
                 />
               ))}
             </div>

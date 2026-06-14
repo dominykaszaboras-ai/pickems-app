@@ -1,14 +1,16 @@
 "use client";
 import clsx from "clsx";
-import type { ClientMatch } from "@/lib/types";
+import type { ClientMatch, ClientTournament } from "@/lib/types";
 import { TeamLogo } from "./TeamLogo";
 import { formatMatchTime } from "@/lib/formatTime";
+import { resolveWatchLinks } from "@/lib/streams";
 
 export function MatchCard({
   match,
   effectiveWinnerId,
   onPick,
   pickHints,
+  tournament,
 }: {
   match: ClientMatch;
   effectiveWinnerId: string | null;
@@ -16,6 +18,10 @@ export function MatchCard({
   onPick: (matchId: string, teamId: string | null) => void;
   // Optional UI hint (e.g. "your 3-0 pick").
   pickHints?: { [teamId: string]: string | undefined };
+  // Provides stream-channel fallback when the match doesn't carry its own.
+  // Optional so existing MatchCard callsites without tournament context
+  // (e.g. tests, projections) still compile.
+  tournament?: ClientTournament;
 }) {
   const a = match.teamA;
   const b = match.teamB;
@@ -78,6 +84,9 @@ export function MatchCard({
           )}
           {match.status === "PENDING" && isOverridden && <span className="text-accent">SIM</span>}
           {match.status === "FINISHED" && <span>Final</span>}
+          {match.status !== "FINISHED" && tournament && (
+            <StreamButtons match={match} tournament={tournament} />
+          )}
           {match.hltvId && (
             <a
               href={`https://www.hltv.org/matches/${match.hltvId}/_`}
@@ -95,5 +104,46 @@ export function MatchCard({
       {pickRow(a, match.scoreA)}
       {pickRow(b, match.scoreB)}
     </div>
+  );
+}
+
+// Compact pair of Twitch / YouTube link buttons. Hidden when neither layer
+// (match override or tournament default) resolved to a real URL.
+function StreamButtons({
+  match,
+  tournament,
+}: {
+  match: ClientMatch;
+  tournament: ClientTournament;
+}) {
+  const { twitchUrl, youtubeUrl } = resolveWatchLinks(match, tournament);
+  if (!twitchUrl && !youtubeUrl) return null;
+  return (
+    <span className="flex items-center gap-0.5">
+      {twitchUrl && (
+        <a
+          href={twitchUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          title="Watch on Twitch"
+          className="rounded px-1 text-[10px] font-semibold text-muted hover:bg-purple-500/15 hover:text-purple-300"
+        >
+          TW
+        </a>
+      )}
+      {youtubeUrl && (
+        <a
+          href={youtubeUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          title="Watch on YouTube"
+          className="rounded px-1 text-[10px] font-semibold text-muted hover:bg-red-500/15 hover:text-red-400"
+        >
+          YT
+        </a>
+      )}
+    </span>
   );
 }

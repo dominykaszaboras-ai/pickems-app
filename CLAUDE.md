@@ -195,12 +195,31 @@ the user changes their mind.
     `name` and `image` from DB on every check so existing JWTs pick up
     DB updates without forcing sign-out + sign-in.
 
+## Data source split (HLTV vs Liquipedia)
+
+We use both — neither alone is enough. Stick to this split when changing
+syncs so we don't lose properties of one for the other.
+
+| What | Source | Why |
+|------|--------|-----|
+| Match results (final scores, winners) | HLTV | Updated within minutes of a map ending; Liquipedia lags 10–30 min. |
+| Live match state (LIVE flag, in-progress score) | HLTV `getMatch` | The fast 2-min cadence depends on a structured endpoint Liquipedia doesn't have. |
+| Upcoming match schedule | **Liquipedia** | HLTV's `getMatches()` routinely returns empty for our Major (Cloudflare challenge parsed as `[]`); Liquipedia's stage pages publish reliable `data-timestamp` epochs. |
+| Teams / general tournament metadata | HLTV (umbrella event) | Sufficient and already wired. |
+| Main broadcast channels (Twitch / YouTube) | **Liquipedia** umbrella event | Lives in the external-links sidebar; HLTV exposes it only on individual match pages we can't reach. |
+| Per-match stream override | Liquipedia (best-effort) | Rarely populated; renderer falls back to tournament default. |
+
+If the Liquipedia tournament moves (new Major), update
+`COLOGNE_2026_LIQUIPEDIA` and `COLOGNE_2026_LIQUIPEDIA_UMBRELLA` in
+`lib/liquipedia.ts` alongside the HLTV event IDs.
+
 ## Cron architecture
 
 | Workflow | Cadence | What it does |
 |---|---|---|
-| `sync.yml` | every 10 min | Full sync: umbrella event + per-stage events. Discovers new matches, teams, schedule. |
+| `sync.yml` | every 10 min | Full sync: umbrella event + per-stage events. Discovers new matches, teams, schedule. Also performs **ghost adoption** — claims Liquipedia-sourced PENDING rows by stamping the now-known `hltvId` on them. |
 | `live-sync.yml` | every 2 min | `syncLiveMatches()` — only touches matches currently LIVE or PENDING within ±30 min. Updates scoreA/scoreB/status/winner via `HLTV.getMatch(id)`. |
+| `sync-schedule.yml` | daily @ 05:30 UTC | Pulls per-stage match schedules + main broadcast channels from Liquipedia. Writes PENDING rows with `hltvId=null` that the regular sync adopts later. |
 
 Browser auto-refresh on `/bracket`: if any match in DOM has `status:"LIVE"`,
 BracketView polls `/api/last-sync` every 30s and calls `router.refresh()`
@@ -303,3 +322,12 @@ If you ever scale beyond a single Railway replica, move the in-memory limiter + 
   route; it's our minimum CSRF defense (we don't issue CSRF tokens).
 - Don't relax the credentials per-email rate limit below ~10/15min — that's
   what keeps online password brute force expensive.
+- Don't move match results or live-state pulls from HLTV to Liquipedia —
+  Liquipedia is community-edited and lags 10–30 min behind real ends. The
+  daily Liquipedia sync is for upcoming schedule + broadcast metadata only.
+- Don't poll Liquipedia faster than daily for the schedule sync. Their
+  usage policy asks for low rates + caching; the 10-min HLTV cadence is OK
+  because it goes to HLTV's API, not Liquipedia.
+- Don't bake stream channel handles into client code — pull from
+  `Tournament.twitchChannel` / `youtubeChannel`; that's how Major changes
+  with new broadcasters auto-propagate after the next daily sync.

@@ -11,6 +11,7 @@ import { PlayoffBracket } from "./PlayoffBracket";
 import { UpcomingSchedule } from "./UpcomingSchedule";
 import { TournamentStatus } from "./TournamentStatus";
 import { StageProjection } from "./StageProjection";
+import { LiveStreamEmbed } from "./LiveStreamEmbed";
 
 export function BracketView({
   tournament,
@@ -115,6 +116,8 @@ export function BracketView({
 
       <TournamentStatus tournament={tournament} />
 
+      <LiveStreamEmbed tournament={tournament} />
+
       <UpcomingSchedule tournament={tournament} />
 
       {/* Stage 3 preview — only renders when Stage 2 is concluded AND Stage 3
@@ -129,6 +132,7 @@ export function BracketView({
           setOverride={setOverride}
           pickem={myPickem}
           score={myScore}
+          tournament={tournament}
         />
       ))}
       {playoffs && (
@@ -138,6 +142,7 @@ export function BracketView({
           setOverride={setOverride}
           pickem={myPickem}
           score={myScore}
+          tournament={tournament}
         />
       )}
     </div>

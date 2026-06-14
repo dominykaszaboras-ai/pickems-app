@@ -50,7 +50,8 @@ async function main() {
   );
   for (const m of sorted) {
     console.log(
-      `  ${m.startTime.toISOString()}  ${m.stageKind.padEnd(8)}  BO${m.bestOf}  ${m.teamAName ?? "?"} vs ${m.teamBName ?? "?"}`,
+      `  ${m.startTime.toISOString()}  ${m.stageKind.padEnd(8)}  BO${m.bestOf}  ${m.teamAName ?? "?"} vs ${m.teamBName ?? "?"}` +
+        `\n    twitch:  ${m.twitchUrl ?? "—"}\n    youtube: ${m.youtubeUrl ?? "—"}`,
     );
   }
 }

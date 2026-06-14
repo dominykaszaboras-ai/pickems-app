@@ -15,7 +15,9 @@
 import { prisma } from "../lib/db";
 import {
   COLOGNE_2026_LIQUIPEDIA,
+  COLOGNE_2026_LIQUIPEDIA_UMBRELLA,
   fetchSchedule,
+  fetchTournamentBroadcasts,
   normalizeTeamName,
   type LiquipediaMatch,
 } from "../lib/liquipedia";
@@ -51,6 +53,24 @@ async function main() {
   }
 
   console.log(`[schedule] fetching Liquipedia for ${tournament.name}`);
+
+  // Tournament-level broadcasts (main stream channels). These rarely change
+  // mid-event, but pulling once a day keeps us honest if the streams pivot
+  // between platforms or the org renames a channel.
+  const broadcasts = await fetchTournamentBroadcasts(COLOGNE_2026_LIQUIPEDIA_UMBRELLA);
+  if (broadcasts.twitchChannel || broadcasts.youtubeChannel) {
+    await prisma.tournament.update({
+      where: { id: tournament.id },
+      data: {
+        twitchChannel: broadcasts.twitchChannel,
+        youtubeChannel: broadcasts.youtubeChannel,
+      },
+    });
+    console.log(
+      `[schedule] broadcasts twitch=${broadcasts.twitchChannel ?? "—"} youtube=${broadcasts.youtubeChannel ?? "—"}`,
+    );
+  }
+
   const matches = await fetchSchedule(COLOGNE_2026_LIQUIPEDIA);
   console.log(`[schedule] Liquipedia returned ${matches.length} matches`);
 
@@ -94,16 +114,26 @@ async function main() {
           { teamAId: teamBId, teamBId: teamAId },
         ],
       },
-      select: { id: true, startTime: true, bestOf: true, hltvId: true },
+      select: { id: true, startTime: true, bestOf: true, hltvId: true, twitchUrl: true, youtubeUrl: true },
     });
 
     if (existing) {
       const sameTime = existing.startTime?.getTime() === m.startTime.getTime();
       const sameBo = existing.bestOf === m.bestOf;
-      if (sameTime && sameBo) continue; // nothing to do
+      // Stream URLs from Liquipedia are sparse but still worth attaching
+      // whenever they're present — overrides the tournament default on the
+      // rare matches Liquipedia tags individually (Grand Final etc).
+      const sameTwitch = (existing.twitchUrl ?? null) === (m.twitchUrl ?? null);
+      const sameYoutube = (existing.youtubeUrl ?? null) === (m.youtubeUrl ?? null);
+      if (sameTime && sameBo && sameTwitch && sameYoutube) continue; // nothing to do
       await prisma.match.update({
         where: { id: existing.id },
-        data: { startTime: m.startTime, bestOf: m.bestOf },
+        data: {
+          startTime: m.startTime,
+          bestOf: m.bestOf,
+          twitchUrl: m.twitchUrl ?? existing.twitchUrl,
+          youtubeUrl: m.youtubeUrl ?? existing.youtubeUrl,
+        },
       });
       upserted++;
       continue;
@@ -120,6 +150,8 @@ async function main() {
         scoreA: 0,
         scoreB: 0,
         hltvId: null,
+        twitchUrl: m.twitchUrl,
+        youtubeUrl: m.youtubeUrl,
       },
     });
     upserted++;

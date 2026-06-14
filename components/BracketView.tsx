@@ -63,10 +63,19 @@ export function BracketView({
     [tournament, myPickem, overrides],
   );
 
-  const swissStages = tournament.stages
-    .filter((s) => s.kind !== "PLAYOFFS")
-    .sort((a, b) => a.kind.localeCompare(b.kind));
-  const playoffs = tournament.stages.find((s) => s.kind === "PLAYOFFS");
+  // Descending stage order — most recent on top. PLAYOFFS first, then
+  // Stage 3 / 2 / 1. Mirrors how the user thinks about the tournament once
+  // it's underway: "what's happening now" up top, "what's already done"
+  // scrolling down.
+  const STAGE_RANK: Record<string, number> = {
+    PLAYOFFS: 4,
+    STAGE_3: 3,
+    STAGE_2: 2,
+    STAGE_1: 1,
+  };
+  const orderedStages = [...tournament.stages].sort(
+    (a, b) => (STAGE_RANK[b.kind] ?? 0) - (STAGE_RANK[a.kind] ?? 0),
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -124,26 +133,28 @@ export function BracketView({
           has no real matches yet. Auto-hides as soon as real data arrives. */}
       <StageProjection tournament={tournament} forStage="STAGE_3" sourceStage="STAGE_2" />
 
-      {swissStages.map((stage) => (
-        <SwissStage
-          key={stage.id}
-          stage={stage}
-          overrides={overrides}
-          setOverride={setOverride}
-          pickem={myPickem}
-          score={myScore}
-          tournament={tournament}
-        />
-      ))}
-      {playoffs && (
-        <PlayoffBracket
-          stage={playoffs}
-          overrides={overrides}
-          setOverride={setOverride}
-          pickem={myPickem}
-          score={myScore}
-          tournament={tournament}
-        />
+      {orderedStages.map((stage) =>
+        stage.kind === "PLAYOFFS" ? (
+          <PlayoffBracket
+            key={stage.id}
+            stage={stage}
+            overrides={overrides}
+            setOverride={setOverride}
+            pickem={myPickem}
+            score={myScore}
+            tournament={tournament}
+          />
+        ) : (
+          <SwissStage
+            key={stage.id}
+            stage={stage}
+            overrides={overrides}
+            setOverride={setOverride}
+            pickem={myPickem}
+            score={myScore}
+            tournament={tournament}
+          />
+        ),
       )}
     </div>
   );

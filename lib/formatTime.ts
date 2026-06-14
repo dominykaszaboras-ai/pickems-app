@@ -41,3 +41,21 @@ function absoluteTime(d: Date): string {
     minute: "2-digit",
   });
 }
+
+// Short relative-past formatter ("3s ago", "12m ago", "2h ago", "5d ago").
+// Used by the Sync button to show how long ago the last sync finished.
+// `nowMs` is injectable so callers (clients with a tick state) can produce
+// stable output across re-renders without relying on Date.now() inside.
+export function formatAgo(iso: string | null, nowMs: number = Date.now()): string {
+  if (!iso) return "never";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "never";
+  const diffSec = Math.max(0, Math.floor((nowMs - then) / 1000));
+  if (diffSec < 60) return `${diffSec}s ago`;
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH < 24) return `${diffH}h ago`;
+  const diffD = Math.floor(diffH / 24);
+  return `${diffD}d ago`;
+}

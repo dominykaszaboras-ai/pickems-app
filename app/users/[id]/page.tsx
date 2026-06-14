@@ -137,7 +137,18 @@ export default async function ProfilePage({ params }: { params: { id: string } }
             </div>
           </div>
 
-          {tournament.stages.map((stage) => {
+          {[...tournament.stages]
+            .sort((a, b) => {
+              // Descending stage order to match the bracket page: PLAYOFFS → S3 → S2 → S1.
+              const rank: Record<string, number> = {
+                PLAYOFFS: 4,
+                STAGE_3: 3,
+                STAGE_2: 2,
+                STAGE_1: 1,
+              };
+              return (rank[b.kind] ?? 0) - (rank[a.kind] ?? 0);
+            })
+            .map((stage) => {
             const isUnlocked = unlocked.has(stage.kind);
             const teamsById = new Map<string, ClientTeam>();
             for (const t of stage.teams) teamsById.set(t.id, t);

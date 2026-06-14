@@ -1,12 +1,17 @@
 "use client";
-// Triggers /api/refresh -> dispatches the GitHub Actions sync workflow,
-// then polls /api/last-sync until the lastSyncedAt timestamp changes (or
-// a timeout fires) and asks the Next.js router to re-render the current
-// page with fresh data.
+// Triggers /api/refresh -> kicks the HLTV sync (server hides the dispatch
+// detail), then polls /api/last-sync until the lastSyncedAt timestamp
+// changes (or a timeout fires) and asks the Next.js router to re-render
+// the current page with fresh data.
+//
+// When idle, the button label is "Synced Xs ago" / "Xm ago" using the most
+// recently observed lastSyncedAt — a 1s ticker keeps it live without
+// thrashing the network.
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import clsx from "clsx";
+import { formatAgo } from "@/lib/formatTime";
 
 type Phase = "idle" | "dispatching" | "waiting" | "done" | "error";
 
@@ -16,39 +21,50 @@ const POLL_TIMEOUT_MS = 90_000;
 export function RefreshButton() {
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>("idle");
-  const [msg, setMsg] = useState<string | null>(null);
-  const initialStamp = useRef<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  // Tick state — bumped every second so `formatAgo` re-evaluates against
+  // the latest now(). We don't store the value, just a counter, so React
+  // re-renders on schedule.
+  const [, setTick] = useState(0);
 
-  // Capture the current lastSyncedAt once on mount.
+  // Capture the current lastSyncedAt once on mount so the button shows
+  // "Synced Xs ago" right away.
   useEffect(() => {
     fetch("/api/last-sync")
       .then((r) => r.json())
-      .then((d) => {
-        initialStamp.current = d?.lastSyncedAt ?? null;
-      })
+      .then((d) => setLastSyncedAt(d?.lastSyncedAt ?? null))
       .catch(() => {});
+  }, []);
+
+  // 1Hz ticker for the relative-time label. Cheap — it just bumps a
+  // counter; the actual "Xs ago" string is derived on render.
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), 1_000);
+    return () => clearInterval(id);
   }, []);
 
   async function onClick() {
     setPhase("dispatching");
-    setMsg(null);
+    setError(null);
     try {
       const r = await fetch("/api/refresh", { method: "POST" });
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
         setPhase("error");
-        setMsg(body.error ?? `Request failed (${r.status})`);
+        setError(body.error ?? `Request failed (${r.status})`);
         return;
       }
     } catch (e) {
       setPhase("error");
-      setMsg((e as Error).message);
+      setError((e as Error).message);
       return;
     }
 
-    // Poll until lastSyncedAt advances or we time out.
+    // Poll until lastSyncedAt advances or we time out. We deliberately
+    // don't expose where the sync runs — the user just sees "Syncing…".
     setPhase("waiting");
-    setMsg("running on GitHub Actions…");
+    const initialStamp = lastSyncedAt;
     const deadline = Date.now() + POLL_TIMEOUT_MS;
 
     while (Date.now() < deadline) {
@@ -57,15 +73,13 @@ export function RefreshButton() {
         const r = await fetch("/api/last-sync", { cache: "no-store" });
         const d = await r.json();
         const stamp: string | null = d?.lastSyncedAt ?? null;
-        if (stamp && stamp !== initialStamp.current) {
-          initialStamp.current = stamp;
+        if (stamp && stamp !== initialStamp) {
+          setLastSyncedAt(stamp);
           setPhase("done");
-          setMsg("updated");
           router.refresh();
-          setTimeout(() => {
-            setPhase("idle");
-            setMsg(null);
-          }, 2_500);
+          // Drop back to the "Synced Xs ago" label after a brief pause —
+          // long enough to register the green tick visually.
+          setTimeout(() => setPhase("idle"), 1_500);
           return;
         }
       } catch {
@@ -74,23 +88,27 @@ export function RefreshButton() {
     }
 
     setPhase("error");
-    setMsg("timed out — try again");
+    setError("timed out — try again");
   }
 
   const busy = phase === "dispatching" || phase === "waiting";
-  const label = {
-    idle: "Sync now",
-    dispatching: "Triggering…",
-    waiting: "Syncing…",
-    done: "✓ Updated",
-    error: "Sync failed",
-  }[phase];
+  const label = (() => {
+    if (phase === "dispatching" || phase === "waiting") return "Syncing…";
+    if (phase === "done") return "✓ Updated";
+    if (phase === "error") return "Sync failed";
+    // idle
+    return lastSyncedAt ? `Synced ${formatAgo(lastSyncedAt)}` : "Sync now";
+  })();
 
   return (
     <button
       onClick={onClick}
       disabled={busy}
-      title="Run the HLTV sync workflow and reload data"
+      title={
+        lastSyncedAt
+          ? `Last sync: ${new Date(lastSyncedAt).toLocaleString()}`
+          : "Run the HLTV sync and reload data"
+      }
       className={clsx(
         "flex items-center gap-2 rounded border px-3 py-1 text-sm",
         phase === "error"
@@ -111,8 +129,8 @@ export function RefreshButton() {
         )}
       />
       <span>{label}</span>
-      {msg && phase !== "idle" && (
-        <span className="text-[10px] opacity-70">{msg}</span>
+      {error && phase === "error" && (
+        <span className="text-[10px] opacity-70">{error}</span>
       )}
     </button>
   );

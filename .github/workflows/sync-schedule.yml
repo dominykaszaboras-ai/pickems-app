@@ -29,5 +29,10 @@ jobs:
           cache: npm
       - name: Install deps
         run: npm install --no-audit --no-fund
+      # Ensure the DB matches the schema before reading/writing. Idempotent;
+      # no-op when the schema is already up to date. Belt + braces with the
+      # `prisma db push` Railway runs on container start.
+      - name: Push schema
+        run: npx prisma db push --accept-data-loss --skip-generate
       - name: Run schedule sync
         run: npm run sync-schedule

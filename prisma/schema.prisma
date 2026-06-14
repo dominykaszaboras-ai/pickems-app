@@ -24,6 +24,12 @@ model User {
   accounts      Account[]
   sessions      Session[]
   pickems       Pickem[]
+  // Bidirectional friendship rows where this user is either the requester
+  // (sent the request) or the receiver (got the request). Status flips from
+  // PENDING -> ACCEPTED on accept; declines just delete the row so the
+  // requester can try again later.
+  friendshipsSent     Friendship[] @relation("FriendshipRequester")
+  friendshipsReceived Friendship[] @relation("FriendshipReceiver")
   createdAt     DateTime  @default(now())
 }
 
@@ -117,7 +123,7 @@ model TournamentTeam {
 model Stage {
   id           String     @id @default(cuid())
   tournamentId String
-  kind         String     // CHALLENGERS | LEGENDS | CHAMPIONS
+  kind         String     // STAGE_1 | STAGE_2 | STAGE_3 | PLAYOFFS  (legacy: CHALLENGERS | LEGENDS | CHAMPIONS)
   name         String
   // Swiss-only: the position within the stage (1..n)
   ordinal      Int        @default(0)
@@ -174,6 +180,28 @@ model Pickem {
   @@unique([userId, tournamentId])
 }
 
+// --- Friendships -------------------------------------------------------------
+// In-app friend graph (no Steam Web API dependency). PENDING rows exist
+// from the moment a request is sent; on accept we flip status to ACCEPTED
+// and stamp respondedAt. Decline is a hard delete of the row so the same
+// pair can re-request later. The unique (requesterId, receiverId) pair
+// prevents duplicate outgoing requests; we also reject (in the API) any
+// new request when a row already exists in either direction.
+model Friendship {
+  id          String   @id @default(cuid())
+  requesterId String
+  receiverId  String
+  status      String   // PENDING | ACCEPTED
+  createdAt   DateTime @default(now())
+  respondedAt DateTime?
+  requester   User     @relation("FriendshipRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  receiver    User     @relation("FriendshipReceiver",  fields: [receiverId],  references: [id], onDelete: Cascade)
+
+  @@unique([requesterId, receiverId])
+  @@index([receiverId, status])
+  @@index([requesterId, status])
+}
+
 // PickKind:
 //  - SWISS_3_0       (Challengers or Legends; teamId = team picked to go 3-0)
 //  - SWISS_0_3       (teamId = team picked to go 0-3)
@@ -183,7 +211,7 @@ model PickemPick {
   id          String  @id @default(cuid())
   pickemId    String
   kind        String
-  stageKind   String  // CHALLENGERS | LEGENDS | CHAMPIONS
+  stageKind   String  // STAGE_1 | STAGE_2 | STAGE_3 | PLAYOFFS  (legacy: CHALLENGERS | LEGENDS | CHAMPIONS)
   teamId      String
   // For PLAYOFF_WINNER: which round (1=QF,2=SF,3=F,4=Champion)
   round       Int?

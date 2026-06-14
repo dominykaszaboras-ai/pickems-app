@@ -311,7 +311,7 @@ railway variables --kv | grep KEY
 
 - [ ] **Wait for Playoffs HLTV event ID** (or confirm it stays on `8301` like Stage 3). Once known, append `,PLAYOFFS:<id>` to `HLTV_STAGE_EVENTS` on the GH secret (Railway env is documentation-only — the cron sync reads from the GH secret).
 - [ ] **Owner: update `HLTV_STAGE_EVENTS` on Railway** to `STAGE_1:9028,STAGE_2:9029,STAGE_3:8301`. Cron runs from GH Actions so syncs work today; the Railway env only matters for `/api/sync` direct calls (Refresh button still dispatches GH).
-- [ ] **Owner: rotate the leaked Postgres password** in Railway (GitGuardian flagged the URI from the pre-scrub CLAUDE.md). New password also needs the GH `DATABASE_URL` secret updated to match.
+- [x] **Rotated Postgres password** (2026-06-14). Regenerated `POSTGRES_PASSWORD` via Railway's variable generator → Railway re-ALTERed the DB user + rebuilt templated `DATABASE_URL` / `DATABASE_PUBLIC_URL` → `pickems-app` redeployed via the `${{Postgres.DATABASE_URL}}` reference. GH Actions `DATABASE_URL` secret updated via `gh secret set`. All three sync workflows verified green afterward.
 - [ ] (Optional) Run `scripts/backfill-stage-names.ts` against prod
   to rewrite the stale "Challengers Stage" / "Legends Stage" /
   "Champions Stage" strings in `Stage.name` and drop the leftover

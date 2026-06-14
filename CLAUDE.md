@@ -23,7 +23,7 @@ Currently tracking **IEM Cologne Major 2026**.
 | Framework | Next.js **14.2.35** (App Router, TypeScript) |
 | Styling   | Tailwind |
 | DB        | Prisma **5.22.0** + PostgreSQL (Railway plugin) |
-| Auth      | NextAuth v5 (`5.0.0-beta.25`) — credentials + Steam OpenID |
+| Auth      | NextAuth v5 (`5.0.0-beta.31`) — credentials + Steam OpenID |
 | Scraping  | `hltv` npm package |
 | Cron      | GitHub Actions (Vercel Cron NOT used — `vercel.json` was deleted) |
 | Host      | Railway (Vercel docs in README are historical) |
@@ -55,13 +55,14 @@ app/
 components/
   Nav.tsx                        Top nav + Steam avatar + sign in/out
   BracketView.tsx                Top-level interactive view
-  TournamentStatus.tsx           Per-stage status banner (status of each stage)
-  UpcomingSchedule.tsx           Next ~36h of pending matches
+  TournamentStatus.tsx           Per-stage status banner (Swiss-aware concluded check)
+  UpcomingSchedule.tsx           Next ~36h of pending matches (TW/YT watch buttons)
+  LiveStreamEmbed.tsx            Twitch iframe at top of /bracket when ANY match is LIVE
   StageProjection.tsx            Stage 3 preview when Stage 2 is done
-  SwissStage.tsx                 Single Swiss stage (Rounds | Pools toggle)
+  SwissStage.tsx                 Single Swiss stage (Rounds | Pools toggle, hidden by default)
   SwissPoolView.tsx              majors.im-style W-L pool layout
   PlayoffBracket.tsx             Playoff bracket
-  MatchCard.tsx                  Single match (click to simulate, HLTV ↗)
+  MatchCard.tsx                  Single match (click to simulate, HLTV ↗, TW/YT)
   PickSummary.tsx                User's picks with correctness per stage
   PickemsForm.tsx                Pick submission UI (locks unstarted stages)
   TeamLogo.tsx                   Team logo with name fallback
@@ -70,10 +71,13 @@ components/
 lib/
   db.ts                          Prisma singleton
   types.ts                       Shared types + STAGE_LABEL + SWISS_STAGE_KINDS
-  auth.ts                        NextAuth config (credentials + steam provider)
-  steam.ts                       OpenID redirect/verify + public XML profile fetch
+  auth.ts                        NextAuth config (credentials + steam provider, login rate-limit)
+  steam.ts                       OpenID redirect/verify + return_to host check + signed-fields check
   hltv.ts                        HLTV scraper wrapper (normalizers, getMatch, getTeam)
-  sync.ts                        syncTournament + syncLiveMatches + parseStageEvents
+  liquipedia.ts                  MediaWiki API client: schedule + broadcast channels + team-name normalizer
+  streams.ts                     resolveWatchLinks() (per-match override → tournament default) + twitchEmbedSrc()
+  rateLimit.ts                   In-memory limiter + clientIp + isSameOrigin (CSRF gate)
+  sync.ts                        syncTournament + syncLiveMatches + parseStageEvents + ghost adoption
   queries.ts                     Server-side data fetching for client types
   scoring.ts                     Pure pickem scoring engine
   formatTime.ts                  Relative + absolute time formatting
@@ -85,6 +89,9 @@ prisma/
 scripts/
   sync.ts                        Full sync runner (npm run sync, 10min cron)
   live-sync.ts                   Live-only fast sync (npm run live-sync, 2min cron)
+  sync-schedule.ts               Daily Liquipedia schedule + broadcast sync (npm run sync-schedule)
+  probe-event.ts                 Diagnostic: HLTV event ID discovery (ids/find/scan/stage modes)
+  probe-liquipedia.ts            Diagnostic: dry-run Liquipedia parser (parse/raw/snippet modes)
   inspect-teams.ts               Diagnostic: teams per stage
   inspect-pickems.ts             Diagnostic: dump saved picks with team names
   migrate-stage-kinds.ts         One-off: rename CHALLENGERS→STAGE_1 etc (run; idempotent)
@@ -94,6 +101,7 @@ scripts/
 .github/workflows/
   sync.yml                       HLTV sync — every 10 minutes
   live-sync.yml                  HLTV live sync — every 2 minutes
+  sync-schedule.yml              Liquipedia schedule + broadcasts — daily @ 05:30 UTC
 ```
 
 ## Data model (key bits)
@@ -104,7 +112,9 @@ scripts/
   Old CSGO majors used `CHALLENGERS/LEGENDS/CHAMPIONS` — migrated.
   **Render headings from `STAGE_LABEL[kind]`**, NOT `stage.name` (the
   name column had stale strings until `backfill-stage-names.ts`).
-- `Match.hltvId Int? @unique`. Status: `PENDING | LIVE | FINISHED`.
+- `Tournament` — adds `twitchChannel String?` + `youtubeChannel String?` (raw handles, e.g. "ESLCS"). Daily Liquipedia sync writes them; UI builds `twitch.tv/<x>` + `youtube.com/@<x>` at render time.
+- `Match.hltvId Int? @unique`. Status: `PENDING | LIVE | FINISHED`. Liquipedia-sourced PENDING rows have `hltvId=null` until adoption.
+- `Match.twitchUrl / youtubeUrl String?` — per-match stream override; usually null, renderer falls back to the tournament default.
 - `User.steamId String? @unique`. SteamID64.
 - `Pickem` has `@@unique([userId, tournamentId])`.
 - `PickemPick.kind`: `SWISS_3_0 | SWISS_0_3 | SWISS_ADVANCE | PLAYOFF_WINNER`.
@@ -124,18 +134,22 @@ scripts/
 
 ## HLTV event IDs (per-major data)
 
-Cologne 2026 splits each Major stage into its own HLTV event:
+Cologne 2026 splits SOME stages into their own HLTV event; Stage 3 lives on the umbrella:
 
 | Stage | Event ID | Notes |
 |---|---|---|
 | Umbrella (teams, dates, name) | `8301` | The /events/8301/... URL on HLTV |
 | Stage 1 | `9028` | Concluded |
 | Stage 2 | `9029` | Concluded |
-| Stage 3 | **TBD** | Add to `HLTV_STAGE_EVENTS` when published |
-| Playoffs | **TBD** | Add to `HLTV_STAGE_EVENTS` when published |
+| Stage 3 | `8301` | **No separate sub-event — matches live directly on the umbrella.** `fetchStageMatches(8301, STAGE_3)` filters by event.id; Stage 1/2 matches live under 9028/9029 so there's no overlap. |
+| Playoffs | **TBD** | Liquipedia umbrella shows them under the same wiki page; verify HLTV setup when bracket is announced. Could also be `8301` like Stage 3. |
 
 `HLTV_EVENT_ID` env var holds the umbrella. `HLTV_STAGE_EVENTS` is a
 comma-separated `KIND:ID` map parsed by `lib/sync.ts:parseStageEvents`.
+
+**Discovery tool**: when a new stage's HLTV event ID is unknown, use
+`scripts/probe-event.ts` (modes: `ids`, `find`, `scan`, `stage`) to
+verify before wiring it into env vars.
 
 ## Env vars (Railway service `pickems-app`)
 
@@ -147,7 +161,7 @@ comma-separated `KIND:ID` map parsed by `lib/sync.ts:parseStageEvents`.
 | `CRON_SECRET` | Protects `/api/sync` (Bearer auth) |
 | `GITHUB_TOKEN` | Server uses this to dispatch GH Actions sync workflow on Refresh button click |
 | `HLTV_EVENT_ID` | `8301` (umbrella) |
-| `HLTV_STAGE_EVENTS` | `STAGE_1:9028,STAGE_2:9029` (extend when Stage 3 / Playoffs land) |
+| `HLTV_STAGE_EVENTS` | `STAGE_1:9028,STAGE_2:9029,STAGE_3:8301` (extend with `PLAYOFFS:<id>` when announced) |
 
 GitHub repo secrets (for workflows):
 - `DATABASE_URL` (public Postgres proxy URL, `acela.proxy.rlwy.net:46540`)
@@ -163,6 +177,13 @@ the same reason. Per-user-key model is the unbuilt compromise if
 the user changes their mind.
 
 ## Critical gotchas (don't relearn these)
+
+0. **`HLTV.getMatches()` returns empty arrays silently** when Cloudflare
+   serves a JS challenge page — the `hltv` package parses the challenge
+   HTML as `[]` instead of throwing. That's why the upcoming match schedule
+   never showed up from HLTV alone. Liquipedia's MediaWiki `parse` API is
+   the workaround — see `Data source split` below.
+
 
 1. **HLTV /results returns no team IDs** — only `team1.name` + `team1.logo`.
    Don't add a normalizer that expects `team1.id`. Identify by name. `lib/sync.ts:ensureTeamByName` is the chokepoint.
@@ -240,15 +261,28 @@ DATABASE_URL="$(railway variables --kv | grep '^DATABASE_PUBLIC_URL=' | cut -d= 
 # Quick live-only update
 DATABASE_URL="..." npx tsx scripts/live-sync.ts
 
-# Diagnostics
+# Daily-style Liquipedia schedule + broadcast sync
+DATABASE_URL="..." HLTV_EVENT_ID=8301 npx tsx scripts/sync-schedule.ts
+
+# Diagnostics — HLTV event ID hunt (no DB)
+npx tsx scripts/probe-event.ts ids 8301 9028 9029
+npx tsx scripts/probe-event.ts scan 9100 9500 "cologne"
+npx tsx scripts/probe-event.ts stage 8301 STAGE_3
+
+# Diagnostics — Liquipedia parser (no DB)
+npx tsx scripts/probe-liquipedia.ts
+npx tsx scripts/probe-liquipedia.ts snippet
+
+# Diagnostics — DB inspection
 DATABASE_URL="..." npx tsx scripts/inspect-teams.ts
 DATABASE_URL="..." npx tsx scripts/inspect-pickems.ts
 
 # Schema migration (regenerate client + push to DB)
 npx prisma generate && DATABASE_URL="..." npx prisma db push --accept-data-loss
 
-# Trigger GH Actions sync now
+# Trigger GH Actions syncs now
 gh workflow run "HLTV sync" --repo dominykaszaboras-ai/pickems-app
+gh workflow run "Liquipedia schedule sync" --repo dominykaszaboras-ai/pickems-app
 
 # Railway env edits
 railway link --project stellar-wonder --service pickems-app --environment production
@@ -275,19 +309,21 @@ railway variables --kv | grep KEY
 
 ## Active todos / followups
 
-- [ ] **Wait for Stage 3 / Playoffs HLTV event IDs**, then add to
-  `HLTV_STAGE_EVENTS` on Railway + GH secret. Format:
-  `STAGE_1:9028,STAGE_2:9029,STAGE_3:<id>,PLAYOFFS:<id>`.
+- [ ] **Wait for Playoffs HLTV event ID** (or confirm it stays on `8301` like Stage 3). Once known, append `,PLAYOFFS:<id>` to `HLTV_STAGE_EVENTS` on the GH secret (Railway env is documentation-only — the cron sync reads from the GH secret).
+- [ ] **Owner: update `HLTV_STAGE_EVENTS` on Railway** to `STAGE_1:9028,STAGE_2:9029,STAGE_3:8301`. Cron runs from GH Actions so syncs work today; the Railway env only matters for `/api/sync` direct calls (Refresh button still dispatches GH).
+- [ ] **Owner: rotate the leaked Postgres password** in Railway (GitGuardian flagged the URI from the pre-scrub CLAUDE.md). New password also needs the GH `DATABASE_URL` secret updated to match.
 - [ ] (Optional) Run `scripts/backfill-stage-names.ts` against prod
   to rewrite the stale "Challengers Stage" / "Legends Stage" /
   "Champions Stage" strings in `Stage.name` and drop the leftover
   9029 tournament row. UI already reads from `STAGE_LABEL[kind]`, so
   this is just DB tidiness.
+- [ ] (Optional) Next.js 14 → 16 major bump to clear the remaining `npm audit` advisories (5 high, mostly DoS / rewrites). Breaking change; do as its own session.
 - [ ] (Optional, if user changes mind) Re-add Steam pickem auto-import
   via per-user Steam API key model (each user pastes their own key + auth
   code, no shared server secret).
 - [ ] (Cosmetic) Add a "Pool view as default for concluded stages"
   preference — right now Rounds is always the default.
+- [ ] (Cosmetic) Round-number inference for Stage 3 matches under the umbrella — they don't carry "Round N" labels, so the Rounds tab is degraded (Pool view is fine, scoring is fine).
 
 ## Security posture (don't regress)
 

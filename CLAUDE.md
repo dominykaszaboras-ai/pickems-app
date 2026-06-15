@@ -46,15 +46,23 @@ app/
     last-sync/route.ts           Polling endpoint for refresh detection
     refresh/route.ts             POST -> dispatches GH Actions workflow
     pickems/route.ts             Save user's picks
+    friends/route.ts             GET accepted friends + pending in/out
+    friends/request/route.ts     POST send friend request
+    friends/respond/route.ts     POST accept/decline incoming request
+    friends/[id]/route.ts        DELETE unfriend / cancel outgoing request
+    users/search/route.ts        GET search users by name (signed-in only, 3-char min)
   auth/signin|signup/page.tsx
   bracket/page.tsx               Bracket + simulator + status + projection
   pickems/page.tsx               Pickem submission form
-  leaderboard/page.tsx           Everyone's scores
+  leaderboard/page.tsx           Everyone's scores + Friends-only toggle (?friends=1)
+  friends/page.tsx               Friend management (search, pending, accepted)
+  users/[id]/page.tsx            Public profile: score + per-stage picks (stage-locked)
+  icon.tsx                       Trophy 🏆 favicon (Next.js App Router ImageResponse)
   page.tsx, layout.tsx, providers.tsx, globals.css
 
 components/
-  Nav.tsx                        Top nav + Steam avatar + sign in/out
-  BracketView.tsx                Top-level interactive view
+  Nav.tsx                        Top nav; avatar click → dropdown (My profile/Friends/Sign out)
+  BracketView.tsx                Top-level interactive view (stages in descending order)
   TournamentStatus.tsx           Per-stage status banner (Swiss-aware concluded check)
   UpcomingSchedule.tsx           Next ~36h of pending matches (TW/YT watch buttons)
   LiveStreamEmbed.tsx            Twitch iframe at top of /bracket when ANY match is LIVE
@@ -66,7 +74,9 @@ components/
   PickSummary.tsx                User's picks with correctness per stage
   PickemsForm.tsx                Pick submission UI (locks unstarted stages)
   TeamLogo.tsx                   Team logo with name fallback
-  RefreshButton.tsx              Triggers GH Actions sync from browser
+  RefreshButton.tsx              Triggers GH Actions sync; idle label = "Synced Xs ago"
+  FriendsView.tsx                Client component for /friends (search + list + actions)
+  FriendButton.tsx               Add/accept/decline/unfriend button on /users/[id]
 
 lib/
   db.ts                          Prisma singleton
@@ -80,11 +90,16 @@ lib/
   sync.ts                        syncTournament + syncLiveMatches + parseStageEvents + ghost adoption
   queries.ts                     Server-side data fetching for client types
   scoring.ts                     Pure pickem scoring engine
-  formatTime.ts                  Relative + absolute time formatting
+  formatTime.ts                  Relative + absolute time formatting; exports formatAgo()
+  friends.ts                     loadFriendGraph / statusOf / loadUserSummaries (server helpers)
 
 prisma/
   schema.prisma                  Provider: postgresql. Team.name is unique.
   seed.ts                        Fake demo major for offline dev
+  manual-sql/
+    friendship_pair_unique.sql   Unordered-pair unique index on Friendship (already applied to prod).
+                                 Run via: DATABASE_URL=... npx prisma db execute --schema prisma/schema.prisma \
+                                   --file prisma/manual-sql/friendship_pair_unique.sql
 
 scripts/
   sync.ts                        Full sync runner (npm run sync, 10min cron)
@@ -118,6 +133,7 @@ scripts/
 - `User.steamId String? @unique`. SteamID64.
 - `Pickem` has `@@unique([userId, tournamentId])`.
 - `PickemPick.kind`: `SWISS_3_0 | SWISS_0_3 | SWISS_ADVANCE | PLAYOFF_WINNER`.
+- `Friendship` — in-app friend graph (no Steam API dependency). `status`: `PENDING | ACCEPTED`. Decline = hard delete so the pair can re-request later. Two unique constraints: Prisma `@@unique([requesterId, receiverId])` (same-direction) + a manual unordered-pair index (`LEAST/GREATEST`) applied to prod via `prisma/manual-sql/friendship_pair_unique.sql` to prevent simultaneous mutual adds producing two PENDING rows. Cascade-deletes when either user is deleted.
 
 ## Pickems format + scoring
 
@@ -312,6 +328,7 @@ railway variables --kv | grep KEY
 - [ ] **Wait for Playoffs HLTV event ID** (or confirm it stays on `8301` like Stage 3). Once known, append `,PLAYOFFS:<id>` to `HLTV_STAGE_EVENTS` on the GH secret (Railway env is documentation-only — the cron sync reads from the GH secret).
 - [ ] **Owner: update `HLTV_STAGE_EVENTS` on Railway** to `STAGE_1:9028,STAGE_2:9029,STAGE_3:8301`. Cron runs from GH Actions so syncs work today; the Railway env only matters for `/api/sync` direct calls (Refresh button still dispatches GH).
 - [x] **Rotated Postgres password** (2026-06-14). Regenerated `POSTGRES_PASSWORD` via Railway's variable generator → Railway re-ALTERed the DB user + rebuilt templated `DATABASE_URL` / `DATABASE_PUBLIC_URL` → `pickems-app` redeployed via the `${{Postgres.DATABASE_URL}}` reference. GH Actions `DATABASE_URL` secret updated via `gh secret set`. All three sync workflows verified green afterward.
+- [x] **In-app friend system** (2026-06-15). Search-and-add friends by display name (no Steam API). `/friends` management page, `/users/[id]` profile with per-stage pick lock, leaderboard Friends-only toggle, avatar dropdown in Nav. See Data model + Security posture sections for full detail.
 - [ ] (Optional) Run `scripts/backfill-stage-names.ts` against prod
   to rewrite the stale "Challengers Stage" / "Legends Stage" /
   "Champions Stage" strings in `Stage.name` and drop the leftover
@@ -321,6 +338,7 @@ railway variables --kv | grep KEY
 - [ ] (Optional, if user changes mind) Re-add Steam pickem auto-import
   via per-user Steam API key model (each user pastes their own key + auth
   code, no shared server secret).
+- [ ] (Cosmetic) Friend system polish deferred from Oracle review: daily search-rate cap (currently 30/min only, fine for current scale); mask per-stage score on locked stages; `getViewerId()` helper to centralise `(session?.user as any)?.id` casts; debounce search re-fire after mutations in FriendsView.
 - [ ] (Cosmetic) Add a "Pool view as default for concluded stages"
   preference — right now Rounds is always the default.
 - [ ] (Cosmetic) Round-number inference for Stage 3 matches under the umbrella — they don't carry "Round N" labels, so the Rounds tab is degraded (Pool view is fine, scoring is fine).
@@ -334,6 +352,7 @@ Layered protections live in:
 - `app/api/signup/route.ts` — `isSameOrigin` gate + 5 signups / hour / IP.
 - `app/api/pickems/route.ts` — `isSameOrigin` gate + session auth + `teamId` validated against `TournamentTeam`.
 - `app/api/refresh/route.ts` — `isSameOrigin` gate + session auth + per-user throttle (6/min) + global 20s dispatch throttle.
+- `app/api/friends/*` + `app/api/users/search` — all session + `isSameOrigin` gated. Request: 30/h/user. Search: 30/min/user. `/request` catches P2002/P2003 (race + FK) so it never leaks user existence. `/respond` + `/[id]` catch P2025 so concurrent deletes return ok instead of 500. Unordered-pair unique index (see Data model) prevents two-PENDING-row race at the DB layer.
 - `lib/auth.ts` — credentials `authorize` is rate-limited per email (10 attempts / 15 min) to make online brute force impractical.
 - `lib/steam.ts:verifyCallback` — validates `openid.return_to` host, requires `openid.signed` to include `claimed_id`, then asks Steam for `check_authentication`.
 - `next.config.mjs` — sets `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `Strict-Transport-Security` on all routes.

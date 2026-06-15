@@ -41,6 +41,9 @@ app/
       [...nextauth]/route.ts     NextAuth route handler
       steam/route.ts             Step 1 of Steam OpenID dance
       steam/callback/route.ts    Step 2 of Steam OpenID dance
+      steam/link/route.ts        Step 1 of Steam LINK flow (session-gated)
+      steam/link/callback/route.ts Step 2 of Steam LINK flow — updates existing user
+      steam/unlink/route.ts      POST: detach Steam from current user (needs email+password fallback)
     signup/route.ts              Credentials signup
     sync/route.ts                Cron-protected full sync (CRON_SECRET)
     last-sync/route.ts           Polling endpoint for refresh detection
@@ -77,6 +80,7 @@ components/
   RefreshButton.tsx              Triggers GH Actions sync; idle label = "Synced Xs ago"
   FriendsView.tsx                Client component for /friends (search + list + actions)
   FriendButton.tsx               Add/accept/decline/unfriend button on /users/[id]
+  SteamLinkPanel.tsx             Link/Unlink Steam panel shown on the viewer's own profile
 
 lib/
   db.ts                          Prisma singleton
@@ -329,6 +333,7 @@ railway variables --kv | grep KEY
 - [ ] **Owner: update `HLTV_STAGE_EVENTS` on Railway** to `STAGE_1:9028,STAGE_2:9029,STAGE_3:8301`. Cron runs from GH Actions so syncs work today; the Railway env only matters for `/api/sync` direct calls (Refresh button still dispatches GH).
 - [x] **Rotated Postgres password** (2026-06-14). Regenerated `POSTGRES_PASSWORD` via Railway's variable generator → Railway re-ALTERed the DB user + rebuilt templated `DATABASE_URL` / `DATABASE_PUBLIC_URL` → `pickems-app` redeployed via the `${{Postgres.DATABASE_URL}}` reference. GH Actions `DATABASE_URL` secret updated via `gh secret set`. All three sync workflows verified green afterward.
 - [x] **In-app friend system** (2026-06-15). Search-and-add friends by display name (no Steam API). `/friends` management page, `/users/[id]` profile with per-stage pick lock, leaderboard Friends-only toggle, avatar dropdown in Nav. See Data model + Security posture sections for full detail.
+- [x] **Steam linking on existing accounts** (2026-06-16). New `/api/auth/steam/link` + `/api/auth/steam/link/callback` routes let a signed-in email user attach a SteamID without creating a fresh row. `/api/auth/steam/unlink` POST detaches, but refuses if the user has no email+passwordHash fallback (would lock themselves out). UI lives in `SteamLinkPanel` on the viewer's own profile page. Conflict cases handled: already-yours, already-linked-to-current-user, SteamID owned by another user (P2002).
 - [ ] (Optional) Run `scripts/backfill-stage-names.ts` against prod
   to rewrite the stale "Challengers Stage" / "Legends Stage" /
   "Champions Stage" strings in `Stage.name` and drop the leftover

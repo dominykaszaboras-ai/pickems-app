@@ -19,6 +19,7 @@ import {
 import { scorePickem } from "@/lib/scoring";
 import { PickSummary } from "@/components/PickSummary";
 import { FriendButton, type ProfileFriendStatus } from "@/components/FriendButton";
+import { SteamLinkPanel } from "@/components/SteamLinkPanel";
 import { loadFriendGraph, statusOf } from "@/lib/friends";
 import { STAGE_LABEL, type ClientTeam, type StageKind } from "@/lib/types";
 
@@ -31,7 +32,14 @@ export default async function ProfilePage({ params }: { params: { id: string } }
 
   const profile = await prisma.user.findUnique({
     where: { id: params.id },
-    select: { id: true, name: true, image: true, steamId: true },
+    select: {
+      id: true,
+      name: true,
+      image: true,
+      steamId: true,
+      email: true,
+      passwordHash: true,
+    },
   });
   if (!profile) notFound();
 
@@ -104,6 +112,15 @@ export default async function ProfilePage({ params }: { params: { id: string } }
           initialFriendshipId={friendshipId}
         />
       </div>
+
+      {viewerId === profile.id && (
+        <div className="mb-6">
+          <SteamLinkPanel
+            hasSteam={Boolean(profile.steamId)}
+            hasFallback={Boolean(profile.email && profile.passwordHash)}
+          />
+        </div>
+      )}
 
       {!tournament && (
         <div className="rounded-xl border border-dashed border-line p-4 text-sm text-muted">

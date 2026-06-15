@@ -140,12 +140,8 @@ export function SwissStage({
 
       <div className="mt-5">
         <h3 className="mb-2 text-xs font-semibold uppercase text-muted">
-          Standings (live + simulated)
+          Standings
         </h3>
-        <p className="mb-2 text-[10px] text-muted">
-          These are real results, not your picks. Teams you picked have a dotted ring;
-          see <span className="text-text">Your picks</span> above for correctness.
-        </p>
         <div className="grid grid-cols-2 gap-1 text-sm md:grid-cols-4">
           {[...standings.values()]
             .sort((a, b) => b.wins - a.wins || a.losses - b.losses)

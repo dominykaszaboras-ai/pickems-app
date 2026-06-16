@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
 import {
   SWISS_STAGE_KINDS,
@@ -91,6 +91,19 @@ export function PickemsForm({
 
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [steamMsg, setSteamMsg] = useState<string | null>(null);
+  // Auto-sync to Steam preference. Defaults to ON; persisted in localStorage
+  // so the user's choice survives reloads without a server-side schema change.
+  const [syncToSteam, setSyncToSteam] = useState(true);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = window.localStorage.getItem("pickems:syncToSteam");
+    if (stored != null) setSyncToSteam(stored === "true");
+  }, []);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("pickems:syncToSteam", String(syncToSteam));
+  }, [syncToSteam]);
 
   const allPicks: ClientPickemPick[] = useMemo(() => {
     const out: ClientPickemPick[] = [];
@@ -109,15 +122,38 @@ export function PickemsForm({
   async function save() {
     setSaving(true);
     setMsg(null);
+    setSteamMsg(null);
     const res = await fetch("/api/pickems", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ tournamentId: tournament.id, picks: allPicks }),
+      body: JSON.stringify({
+        tournamentId: tournament.id,
+        picks: allPicks,
+        syncToSteam,
+      }),
     });
     setSaving(false);
-    if (res.ok) setMsg("Saved!");
-    else {
-      const d = await res.json().catch(() => ({}));
+    const d = await res.json().catch(() => ({}));
+    if (res.ok) {
+      setMsg("Saved!");
+      const push: {
+        attempted?: boolean;
+        ok?: boolean;
+        uploaded?: number;
+        reason?: string;
+      } | undefined = d.steamPush;
+      if (push?.attempted) {
+        if (push.ok) {
+          setSteamMsg(`Synced ${push.uploaded} pick(s) to Steam`);
+        } else if (push.reason === "stage_not_open") {
+          setSteamMsg("Steam hasn't opened those picks for upload yet — saved locally");
+        } else if (push.reason === "stage_closed") {
+          setSteamMsg("Steam considers those stages closed — saved locally");
+        } else {
+          setSteamMsg(`Saved locally; Steam upload failed (${push.reason ?? "unknown"})`);
+        }
+      }
+    } else {
       setMsg(d.error ?? "Failed to save");
     }
   }
@@ -151,9 +187,21 @@ export function PickemsForm({
         <LockedStage title="Playoffs" reason={lockedReason.PLAYOFFS} />
       )}
 
-      <div className="sticky bottom-4 flex items-center justify-between rounded-2xl border border-line bg-panel/90 p-4 backdrop-blur">
-        <div className="text-sm text-muted">{allPicks.length} picks selected</div>
+      <div className="sticky bottom-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-panel/90 p-4 backdrop-blur">
+        <div className="flex flex-col gap-1">
+          <div className="text-sm text-muted">{allPicks.length} picks selected</div>
+          <label className="flex items-center gap-2 text-xs text-muted">
+            <input
+              type="checkbox"
+              checked={syncToSteam}
+              onChange={(e) => setSyncToSteam(e.target.checked)}
+              className="h-3.5 w-3.5"
+            />
+            Auto-sync picks to Steam (Major sticker reward)
+          </label>
+        </div>
         <div className="flex items-center gap-3">
+          {steamMsg && <span className="text-xs text-muted">{steamMsg}</span>}
           {msg && <span className="text-sm text-muted">{msg}</span>}
           <button
             onClick={save}

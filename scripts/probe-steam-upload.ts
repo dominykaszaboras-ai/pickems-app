@@ -20,6 +20,7 @@
 import { prisma } from "../lib/db";
 import {
   extractPredictions,
+  parseSteamLayout,
   uploadTournamentPredictions,
 } from "../lib/steamPickems";
 
@@ -52,13 +53,24 @@ async function main() {
   const predictions = extractPredictions(raw.predictions);
   console.log(`Extracted ${predictions.length} picks from stored raw.`);
 
-  // Convert our internal {groupid, index, pickid} shape -> Valve's
-  // {groupid, index, pick} (just rename pickid -> pick).
-  const payload = predictions.map((p) => ({
-    groupid: p.groupid,
-    index: p.index,
-    pick: p.pickid,
-  }));
+  // Resolve each pick's groupid -> sectionid via the cached layout.
+  const layout = parseSteamLayout(raw.layout);
+  const sectionByGroup = new Map<number, number>();
+  for (const v of layout.bySlot.values()) {
+    sectionByGroup.set(v.groupid, v.sectionid);
+  }
+  const payload = predictions
+    .map((p) => {
+      const sectionid = sectionByGroup.get(p.groupid);
+      if (sectionid == null) return null;
+      return {
+        sectionid,
+        groupid: p.groupid,
+        index: p.index,
+        pick: p.pickid,
+      };
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null);
 
   console.log(`Uploading ${payload.length} picks to Valve...`);
   const res = await uploadTournamentPredictions(

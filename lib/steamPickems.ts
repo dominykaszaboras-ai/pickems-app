@@ -143,19 +143,42 @@ export async function uploadTournamentPredictions(
   event: number,
   steamId: string,
   steamidkey: string,
-  picks: Array<{ groupid: number; index: number; pick: number }>,
+  picks: Array<{
+    sectionid: number;
+    groupid: number;
+    index: number;
+    pick: number;
+  }>,
 ): Promise<{ ok: boolean; status: number; body: unknown }> {
+  if (picks.length === 0) {
+    return { ok: true, status: 200, body: { skipped: true } };
+  }
   const budgetOk = consumeOutboundBudget();
   if (!budgetOk.ok) {
     throw new Error("Steam upstream is throttled — try again shortly.");
   }
 
+  // Format Valve actually expects (per probe response): repeated top-level
+  // form fields. One sectionid/groupid/index/pickid per pick, with matching
+  // array positions. Field name for the team is `pickid` (singular) here,
+  // not `pick`, even though GetTournamentPredictions returns it as `pick`.
+  // We send both shapes (pickid AND pick) to be tolerant of either reading.
   const form = new URLSearchParams();
   form.set("key", key());
   form.set("event", String(event));
   form.set("steamid", steamId);
   form.set("steamidkey", steamidkey);
-  form.set("predictions", JSON.stringify(picks));
+  for (const p of picks) {
+    form.append("sectionid", String(p.sectionid));
+    form.append("groupid", String(p.groupid));
+    form.append("index", String(p.index));
+    form.append("pickid", String(p.pick));
+    // Valve also wants itemid — empirically this is the same number as
+    // pickid (the team id), because in CS2 each Major team has exactly one
+    // tournament-sticker item slot, and Valve resolves the inventory item
+    // from the team id automatically when the user has the auth-code grant.
+    form.append("itemid", String(p.pick));
+  }
 
   let r: Response;
   try {
@@ -299,7 +322,17 @@ import type { PickKind, StageKind } from "./types";
 
 export interface SteamLayoutParsed {
   byPickid: Map<number, string>;
-  bySlot: Map<string, { stageKind: StageKind; pickKind: PickKind; round: number | null }>;
+  bySlot: Map<
+    string,
+    {
+      stageKind: StageKind;
+      pickKind: PickKind;
+      round: number | null;
+      sectionid: number;
+      groupid: number;
+      index: number;
+    }
+  >;
 }
 
 export function parseSteamLayout(layout: unknown): SteamLayoutParsed {
@@ -311,16 +344,16 @@ export function parseSteamLayout(layout: unknown): SteamLayoutParsed {
     }
   }
 
-  const bySlot = new Map<
-    string,
-    { stageKind: StageKind; pickKind: PickKind; round: number | null }
-  >();
+  const bySlot: SteamLayoutParsed["bySlot"] = new Map();
 
   for (const s of (r.sections ?? []) as Array<{
+    sectionid?: number;
     name?: string;
     groups?: Array<{ groupid?: number; picks?: Array<{ index?: number }> }>;
   }>) {
     const sName = String(s.name ?? "");
+    const sectionid = Number(s.sectionid);
+    if (!Number.isFinite(sectionid)) continue;
     const stage = detectStage(sName);
     if (!stage) continue;
 
@@ -331,7 +364,7 @@ export function parseSteamLayout(layout: unknown): SteamLayoutParsed {
       for (const p of picks) {
         const idx = Number(p.index ?? 0);
         let pickKind: PickKind;
-        let round: number | null = stage.round ?? null;
+        const round: number | null = stage.round ?? null;
         if (stage.kind === "PLAYOFFS") {
           pickKind = "PLAYOFF_WINNER";
         } else if (idx <= 1) {
@@ -341,7 +374,14 @@ export function parseSteamLayout(layout: unknown): SteamLayoutParsed {
         } else {
           pickKind = "SWISS_ADVANCE";
         }
-        bySlot.set(`${groupid}:${idx}`, { stageKind: stage.kind, pickKind, round });
+        bySlot.set(`${groupid}:${idx}`, {
+          stageKind: stage.kind,
+          pickKind,
+          round,
+          sectionid,
+          groupid,
+          index: idx,
+        });
       }
     }
   }
@@ -463,7 +503,7 @@ export function localPicksToSteam(
   }>,
   teamNameById: Map<string, string>, // our team id -> name
   normalize: (name: string) => string,
-): Array<{ groupid: number; index: number; pick: number }> {
+): Array<{ sectionid: number; groupid: number; index: number; pick: number }> {
   // Invert byPickid (Steam pickid -> name) to (normalized name -> Steam pickid).
   const steamPickidByNormalizedName = new Map<string, number>();
   for (const [pickid, name] of parsed.byPickid) {
@@ -471,26 +511,34 @@ export function localPicksToSteam(
   }
 
   // Build group inventory: for each stageKind+slotKind, list available
-  // (groupid, index) pairs in order. We'll consume from these as we map picks.
+  // (sectionid, groupid, index) tuples in order. We'll consume from these
+  // as we map picks.
   type SlotKey = `${StageKind}:${string}`;
   const inventory = new Map<
     SlotKey,
-    Array<{ groupid: number; index: number; round: number | null }>
+    Array<{ sectionid: number; groupid: number; index: number; round: number | null }>
   >();
-  for (const [k, v] of parsed.bySlot) {
-    const [groupidStr, indexStr] = k.split(":");
-    const groupid = Number(groupidStr);
-    const index = Number(indexStr);
+  for (const v of parsed.bySlot.values()) {
     const key: SlotKey = `${v.stageKind}:${v.pickKind}`;
     const list = inventory.get(key) ?? [];
-    list.push({ groupid, index, round: v.round });
+    list.push({
+      sectionid: v.sectionid,
+      groupid: v.groupid,
+      index: v.index,
+      round: v.round,
+    });
     inventory.set(key, list);
   }
   for (const list of inventory.values()) {
     list.sort((a, b) => a.groupid - b.groupid || a.index - b.index);
   }
 
-  const out: Array<{ groupid: number; index: number; pick: number }> = [];
+  const out: Array<{
+    sectionid: number;
+    groupid: number;
+    index: number;
+    pick: number;
+  }> = [];
 
   for (const local of localPicks) {
     // Champion (round=4) is folded into round=3 on Steam's side.
@@ -515,7 +563,12 @@ export function localPicksToSteam(
     }
     const slot = slots.splice(slotIdx, 1)[0];
 
-    out.push({ groupid: slot.groupid, index: slot.index, pick: steamPickid });
+    out.push({
+      sectionid: slot.sectionid,
+      groupid: slot.groupid,
+      index: slot.index,
+      pick: steamPickid,
+    });
   }
 
   return out;

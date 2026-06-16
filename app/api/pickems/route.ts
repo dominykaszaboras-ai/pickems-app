@@ -5,6 +5,13 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { isSameOrigin } from "@/lib/rateLimit";
+import {
+  getTournamentLayout,
+  localPicksToSteam,
+  parseSteamLayout,
+  uploadTournamentPredictions,
+} from "@/lib/steamPickems";
+import { normalizeTeamName } from "@/lib/liquipedia";
 
 export const runtime = "nodejs";
 
@@ -19,6 +26,10 @@ const PickSchema = z.object({
 const Body = z.object({
   tournamentId: z.string().min(1).max(64),
   picks: z.array(PickSchema).max(200),
+  // Set to false to skip pushing picks to Steam even when the user has
+  // Steam + auth code on file. Lets the client honour an opt-out toggle
+  // without us needing to persist the preference server-side.
+  syncToSteam: z.boolean().optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -33,7 +44,7 @@ export async function POST(req: NextRequest) {
   const parsed = Body.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid input" }, { status: 400 });
 
-  const { tournamentId, picks } = parsed.data;
+  const { tournamentId, picks, syncToSteam = true } = parsed.data;
   const tournament = await prisma.tournament.findUnique({ where: { id: tournamentId } });
   if (!tournament) return NextResponse.json({ error: "Tournament not found" }, { status: 404 });
 
@@ -100,5 +111,115 @@ export async function POST(req: NextRequest) {
     return pickem;
   });
 
-  return NextResponse.json({ ok: true, pickemId: result.id });
+  // Best-effort push to Steam. Never blocks or fails the local save; we
+  // log Valve errors and report them back to the client so the form can
+  // show a "saved locally, Steam couldn't be reached" warning if it
+  // happens. Eligible when the user has Steam linked AND an auth code
+  // on file AND the client didn't explicitly opt out.
+  const steamPush = await maybePushToSteam(userId, picks, syncToSteam);
+
+  return NextResponse.json({
+    ok: true,
+    pickemId: result.id,
+    steamPush,
+  });
+}
+
+interface SteamPushResult {
+  attempted: boolean;
+  ok: boolean;
+  uploaded: number;
+  reason?: string;
+}
+
+async function maybePushToSteam(
+  userId: string,
+  picks: Array<{
+    kind: "SWISS_3_0" | "SWISS_0_3" | "SWISS_ADVANCE" | "PLAYOFF_WINNER";
+    stageKind: "STAGE_1" | "STAGE_2" | "STAGE_3" | "PLAYOFFS";
+    teamId: string;
+    round?: number | null;
+  }>,
+  enabled: boolean,
+): Promise<SteamPushResult> {
+  if (!enabled) {
+    return { attempted: false, ok: false, uploaded: 0, reason: "disabled" };
+  }
+  const eventId = Number(process.env.STEAM_PICKEM_EVENT_ID ?? 0);
+  if (!eventId) {
+    return { attempted: false, ok: false, uploaded: 0, reason: "no_event_id" };
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { steamId: true, steamPickemCode: true },
+  });
+  if (!user?.steamId || !user.steamPickemCode) {
+    return { attempted: false, ok: false, uploaded: 0, reason: "no_steam_link" };
+  }
+  if (picks.length === 0) {
+    return { attempted: false, ok: false, uploaded: 0, reason: "no_picks" };
+  }
+
+  try {
+    const layout = await getTournamentLayout(eventId);
+    const parsed = parseSteamLayout(layout);
+
+    // Build team-id -> team-name lookup so the reverse mapper can resolve
+    // each PickemPick to a Steam pickid.
+    const teamIds = Array.from(new Set(picks.map((p) => p.teamId)));
+    const teams = await prisma.team.findMany({
+      where: { id: { in: teamIds } },
+      select: { id: true, name: true },
+    });
+    const teamNameById = new Map(teams.map((t) => [t.id, t.name]));
+
+    const steamPicks = localPicksToSteam(
+      parsed,
+      picks.map((p) => ({
+        kind: p.kind,
+        stageKind: p.stageKind,
+        teamId: p.teamId,
+        round: p.round ?? null,
+      })),
+      teamNameById,
+      normalizeTeamName,
+    );
+
+    if (steamPicks.length === 0) {
+      return {
+        attempted: true,
+        ok: false,
+        uploaded: 0,
+        reason: "no_matchable_picks",
+      };
+    }
+
+    const res = await uploadTournamentPredictions(
+      eventId,
+      user.steamId,
+      user.steamPickemCode,
+      steamPicks,
+    );
+    if (!res.ok) {
+      // 410 = stages concluded (expected for Swiss after the bracket starts).
+      // 400 = Valve hasn't opened the section yet (typical for playoffs
+      // before they go live). Both are non-fatal.
+      const reason =
+        res.status === 410
+          ? "stage_closed"
+          : res.status === 400
+            ? "stage_not_open"
+            : `valve_${res.status}`;
+      return { attempted: true, ok: false, uploaded: 0, reason };
+    }
+    return { attempted: true, ok: true, uploaded: steamPicks.length };
+  } catch (e) {
+    console.error("[pickems-save] steam push threw", e);
+    return {
+      attempted: true,
+      ok: false,
+      uploaded: 0,
+      reason: "exception",
+    };
+  }
 }

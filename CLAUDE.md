@@ -116,6 +116,7 @@ scripts/
   probe-event.ts                 Diagnostic: HLTV event ID discovery (ids/find/scan/stage modes)
   probe-liquipedia.ts            Diagnostic: dry-run Liquipedia parser (parse/raw/snippet modes)
   probe-steam-pickem.ts          Diagnostic: enumerate Valve pickem event IDs via GetTournamentLayout/v1 (no DB; needs STEAM_API_KEY)
+  probe-steam-upload.ts          Diagnostic: re-upload a user's existing stored predictions to UploadTournamentPredictions/v1 (no-op, useful for confirming body format)
   inspect-teams.ts               Diagnostic: teams per stage
   inspect-pickems.ts             Diagnostic: dump saved picks with team names
   migrate-stage-kinds.ts         One-off: rename CHALLENGERS→STAGE_1 etc (run; idempotent)
@@ -355,6 +356,10 @@ STEAM_API_KEY="..." npx tsx scripts/probe-steam-pickem.ts            # range 1..
 STEAM_API_KEY="..." npx tsx scripts/probe-steam-pickem.ts 20 60      # custom range
 STEAM_API_KEY="..." npx tsx scripts/probe-steam-pickem.ts 26         # dump full JSON for one id
 
+# Diagnostic — Valve UploadTournamentPredictions/v1 (re-uploads user's stored picks; no-op)
+DATABASE_URL="..." STEAM_API_KEY="..." STEAM_PICKEM_EVENT_ID=26 \
+  npx tsx scripts/probe-steam-upload.ts <userId>
+
 # Diagnostics — DB inspection
 DATABASE_URL="..." npx tsx scripts/inspect-teams.ts
 DATABASE_URL="..." npx tsx scripts/inspect-pickems.ts
@@ -399,7 +404,7 @@ railway variables --kv | grep KEY
 - [x] **Pickem auto-import via Steam Web API** (2026-06-16). User pastes their per-Major "Major Auth Code" (`steamidkey`) from help.steampowered.com on `/pickems` (only visible when they have a linked SteamID). `/api/pickems/sync-steam` calls `ICSGOTournaments_730/GetTournamentLayout/v1` + `GetTournamentPredictions/v1`, stores raw JSON on `User.steamPickemRaw` (+ code on `steamPickemCode`), returns prediction count. **Mapping Valve's predictions -> our PickemPick rows is the active Phase 2 work** — layout schema is known (below), but we need one real `GetTournamentPredictions` response (i.e. someone pastes their auth code) to confirm the index→kind ordering before committing to it. `STEAM_API_KEY` and `STEAM_PICKEM_EVENT_ID=26` set on Railway (2026-06-16).
 - [x] **Playoff picker rebuilt as bracket UI** (2026-06-16). Replaced the old PlayoffsPicker (4 dropdowns) with `PlayoffBracketPicker` — CS2-style click-to-advance bracket. 4 QF matchups stack on the left, click a team to advance them; SF candidates derive from your QF picks (SF1 = winner(QF1) vs winner(QF2)); Final candidates derive from SFs; Champion auto-fills with the Final winner. Changing an upstream pick cleanly invalidates stale downstream picks via the `rebuild()` helper in the picker. The form now stores playoff picks as `Array<{round, teamId}>` so we can hold the full Cologne 2026 format (4+2+1+1 = 8 picks) — the old `Record<number, string|null>` could only hold 1 per round.
 - [x] **Phase 2 — Valve -> PickemPick read mapper** (2026-06-16). `lib/steamPickems.ts` ships `parseSteamLayout()` (turns `GetTournamentLayout` JSON into `{byPickid, bySlot}`) and `steamPicksToLocal()` (predictions array + team name map -> our PickemPick rows). Confirmed against a real Cologne 2026 response: index ordering is `[0,1]=3-0`, `[2..7]=advance`, `[8,9]=0-3` (NOT the `[2,3]=0-3` I'd assumed). Section names matched by substring ("Stage I", "Quarterfinals", "Grand Final"). Grand Final pick is duplicated into round=3 (Final) AND round=4 (Champion). `/api/pickems/sync-steam` now writes mapped picks straight to PickemPick rows, replacing ONLY the stages Steam returned (preserves locally-entered picks for stages Steam doesn't have yet, e.g. playoffs not open).
-- [ ] **Phase 3 — write-back on pickem save**. Once the read mapper is verified, POST `UploadTournamentPredictions/v1` on every `/api/pickems` save when the user has Steam linked + auth code on file. Best-effort: webapp save succeeds even if Steam upload fails, with a warning surfaced to the user. Opt-out toggle on the PickemsForm.
+- [x] **Phase 3 — write-back to Steam on pickem save** (2026-06-16). `/api/pickems` POST now does a best-effort `UploadTournamentPredictions/v1` push after the local save. Eligible when the user has Steam linked AND a `steamPickemCode` on file AND `syncToSteam` isn't disabled (default on, persisted in localStorage). Save never fails on Steam errors — we return a `steamPush` object (`{attempted, ok, uploaded, reason}`) so the form can show "Synced N picks to Steam" or "Saved locally; Steam hasn't opened those picks for upload yet". Body format Valve actually accepts is repeated top-level form fields: `sectionid`, `groupid`, `index`, `pickid`, `itemid` (itemid = pickid empirically). Verified by re-uploading a user's existing Swiss picks and getting 410 "Gone" (stages closed) instead of 400 (= format accepted). Playoff uploads to event 26 currently return 400 until Valve opens the playoff prediction window post-Stage 3.
 - [ ] (Optional) Run `scripts/backfill-stage-names.ts` against prod
   to rewrite the stale "Challengers Stage" / "Legends Stage" /
   "Champions Stage" strings in `Stage.name` and drop the leftover

@@ -122,6 +122,69 @@ export async function getTournamentLayout(event: number): Promise<unknown> {
   return value;
 }
 
+// POST UploadTournamentPredictions/v1.
+//
+// Format is undocumented; reverse-engineered against the upload your Steam
+// account already sent (so re-uploading the same picks is a safe no-op /
+// idempotent confirmation). Body shape we ship:
+//
+//   POST .../UploadTournamentPredictions/v1/
+//   Content-Type: application/x-www-form-urlencoded
+//   key=...
+//   event=26
+//   steamid=765...
+//   steamidkey=AAAA-AAAAA-AAAA
+//   predictions=[{"groupid":271,"index":0,"pick":80}, ...]
+//
+// If Valve rejects this shape we'll see a 4xx with a hint and iterate.
+// The function returns Valve's parsed JSON response so the caller can
+// inspect `result.success` / `result.error` if present.
+export async function uploadTournamentPredictions(
+  event: number,
+  steamId: string,
+  steamidkey: string,
+  picks: Array<{ groupid: number; index: number; pick: number }>,
+): Promise<{ ok: boolean; status: number; body: unknown }> {
+  const budgetOk = consumeOutboundBudget();
+  if (!budgetOk.ok) {
+    throw new Error("Steam upstream is throttled — try again shortly.");
+  }
+
+  const form = new URLSearchParams();
+  form.set("key", key());
+  form.set("event", String(event));
+  form.set("steamid", steamId);
+  form.set("steamidkey", steamidkey);
+  form.set("predictions", JSON.stringify(picks));
+
+  let r: Response;
+  try {
+    r = await fetch(`${BASE}/UploadTournamentPredictions/v1/`, {
+      method: "POST",
+      headers: {
+        "user-agent": "pickems-app",
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: form.toString(),
+    });
+  } catch {
+    throw new Error("Couldn't reach Steam (network).");
+  }
+  const text = await safeBody(r);
+  let parsed: unknown = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    parsed = text;
+  }
+  if (!r.ok) {
+    console.error(
+      `[steamPickems] upload ${r.status}: ${typeof parsed === "string" ? parsed : JSON.stringify(parsed).slice(0, 300)}`,
+    );
+  }
+  return { ok: r.ok, status: r.status, body: parsed };
+}
+
 export async function getTournamentPredictions(
   event: number,
   steamId: string,
@@ -368,5 +431,92 @@ export function steamPicksToLocal(
       `[steamPickems] mapper skipped ${unmatchedSlots} unknown slot(s) and ${unmatchedTeams} unknown team(s)`,
     );
   }
+  return out;
+}
+
+// Reverse of steamPicksToLocal: our PickemPick rows -> Valve's upload shape.
+//
+// Round=4 (Champion) is intentionally NOT included as an extra pick — Valve's
+// Grand Final group already represents the champion (one pick = the winner
+// of the final). Sending round=4 too would either error or create a phantom
+// pick. We rely on round=3 for the Final / Champion slot.
+//
+// Slot resolution for Swiss stages uses the SAME index convention as the
+// read mapper:
+//   3-0      -> [0, 1]
+//   advance  -> [2, 3, 4, 5, 6, 7]
+//   0-3      -> [8, 9]
+// We allocate the available slots in order so two 3-0 picks land at indices
+// 0 and 1 etc. — Valve doesn't care which 3-0 is "first" as long as both
+// are in the 3-0 slots.
+//
+// Playoff QF picks are placed into the 4 QF groups in order. Order doesn't
+// matter for scoring (you either picked the right team or you didn't); we
+// just need to fill 4 groups with 4 teams.
+export function localPicksToSteam(
+  parsed: SteamLayoutParsed,
+  localPicks: Array<{
+    kind: PickKind;
+    stageKind: StageKind;
+    teamId: string;
+    round: number | null;
+  }>,
+  teamNameById: Map<string, string>, // our team id -> name
+  normalize: (name: string) => string,
+): Array<{ groupid: number; index: number; pick: number }> {
+  // Invert byPickid (Steam pickid -> name) to (normalized name -> Steam pickid).
+  const steamPickidByNormalizedName = new Map<string, number>();
+  for (const [pickid, name] of parsed.byPickid) {
+    steamPickidByNormalizedName.set(normalize(name), pickid);
+  }
+
+  // Build group inventory: for each stageKind+slotKind, list available
+  // (groupid, index) pairs in order. We'll consume from these as we map picks.
+  type SlotKey = `${StageKind}:${string}`;
+  const inventory = new Map<
+    SlotKey,
+    Array<{ groupid: number; index: number; round: number | null }>
+  >();
+  for (const [k, v] of parsed.bySlot) {
+    const [groupidStr, indexStr] = k.split(":");
+    const groupid = Number(groupidStr);
+    const index = Number(indexStr);
+    const key: SlotKey = `${v.stageKind}:${v.pickKind}`;
+    const list = inventory.get(key) ?? [];
+    list.push({ groupid, index, round: v.round });
+    inventory.set(key, list);
+  }
+  for (const list of inventory.values()) {
+    list.sort((a, b) => a.groupid - b.groupid || a.index - b.index);
+  }
+
+  const out: Array<{ groupid: number; index: number; pick: number }> = [];
+
+  for (const local of localPicks) {
+    // Champion (round=4) is folded into round=3 on Steam's side.
+    if (local.round === 4) continue;
+
+    const teamName = teamNameById.get(local.teamId);
+    if (!teamName) continue;
+    const steamPickid = steamPickidByNormalizedName.get(normalize(teamName));
+    if (steamPickid == null) continue;
+
+    const key: SlotKey = `${local.stageKind}:${local.kind}`;
+    const slots = inventory.get(key);
+    if (!slots || slots.length === 0) continue;
+
+    // For playoffs, match the slot by round if we have one; otherwise just
+    // take the next available slot.
+    let slotIdx = 0;
+    if (local.kind === "PLAYOFF_WINNER" && local.round != null) {
+      const r = local.round;
+      slotIdx = slots.findIndex((s) => s.round === r);
+      if (slotIdx < 0) slotIdx = 0;
+    }
+    const slot = slots.splice(slotIdx, 1)[0];
+
+    out.push({ groupid: slot.groupid, index: slot.index, pick: steamPickid });
+  }
+
   return out;
 }

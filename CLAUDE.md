@@ -44,6 +44,7 @@ app/
       steam/link/route.ts        Step 1 of Steam LINK flow (session-gated)
       steam/link/callback/route.ts Step 2 of Steam LINK flow — updates existing user
       steam/unlink/route.ts      POST: detach Steam from current user (needs email+password fallback)
+    pickems/sync-steam/route.ts  POST: paste Major Auth Code -> Valve API -> raw JSON saved on User
     signup/route.ts              Credentials signup
     sync/route.ts                Cron-protected full sync (CRON_SECRET)
     last-sync/route.ts           Polling endpoint for refresh detection
@@ -81,12 +82,14 @@ components/
   FriendsView.tsx                Client component for /friends (search + list + actions)
   FriendButton.tsx               Add/accept/decline/unfriend button on /users/[id]
   SteamLinkPanel.tsx             Link/Unlink Steam panel shown on the viewer's own profile
+  SteamSyncCard.tsx              Paste Major Auth Code on /pickems (only when user has steamId)
 
 lib/
   db.ts                          Prisma singleton
   types.ts                       Shared types + STAGE_LABEL + SWISS_STAGE_KINDS
   auth.ts                        NextAuth config (credentials + steam provider, login rate-limit)
   steam.ts                       OpenID redirect/verify + return_to host check + signed-fields check
+  steamPickems.ts                ICSGOTournaments_730 wrapper: layout + predictions + raw-shape extractor
   hltv.ts                        HLTV scraper wrapper (normalizers, getMatch, getTeam)
   liquipedia.ts                  MediaWiki API client: schedule + broadcast channels + team-name normalizer
   streams.ts                     resolveWatchLinks() (per-match override → tournament default) + twitchEmbedSrc()
@@ -162,7 +165,7 @@ Cologne 2026 splits SOME stages into their own HLTV event; Stage 3 lives on the 
 | Stage 1 | `9028` | Concluded |
 | Stage 2 | `9029` | Concluded |
 | Stage 3 | `8301` | **No separate sub-event — matches live directly on the umbrella.** `fetchStageMatches(8301, STAGE_3)` filters by event.id; Stage 1/2 matches live under 9028/9029 so there's no overlap. |
-| Playoffs | **TBD** | Liquipedia umbrella shows them under the same wiki page; verify HLTV setup when bracket is announced. Could also be `8301` like Stage 3. |
+| Playoffs | `9029` (per 2026-06-16) | **Same HLTV event id as Stage 2.** Stage 2 is concluded so practical overlap is low, but be aware `fetchStageMatches` will see both stages' matches via id 9029 and rely on the `stageKind` arg to attribute them correctly. If we see double-counts, switch playoffs to its own id (probe with `scripts/probe-event.ts`). |
 
 `HLTV_EVENT_ID` env var holds the umbrella. `HLTV_STAGE_EVENTS` is a
 comma-separated `KIND:ID` map parsed by `lib/sync.ts:parseStageEvents`.
@@ -188,13 +191,27 @@ GitHub repo secrets (for workflows):
 - `HLTV_EVENT_ID`
 - `HLTV_STAGE_EVENTS`
 
-**STEAM_API_KEY is intentionally NOT set.** Per security preference,
-we don't run a server-wide Steam Web API key. Steam profile data
-comes from the public community XML endpoint (no key needed). Steam
-pickem auto-import via `ICSGOTournaments_730` is implemented in
-git history (commit `754c47c`) but reverted (commit `076c1cb`) for
-the same reason. Per-user-key model is the unbuilt compromise if
-the user changes their mind.
+**STEAM_API_KEY is now set** (as of 2026-06-16) to enable Major pickem
+auto-import via `ICSGOTournaments_730/GetTournamentPredictions`. The
+key is owned by `dominykaszaboras@gmail.com`'s Steam account — leak
+impact is bounded (Valve will revoke it, app loses Steam features
+until rotated). **Key lives in Railway env only — never commit it.**
+Profile data still comes from the public community XML endpoint;
+the key is only used for the per-user pickem import (gated by the
+user's per-Major "Major Auth Code").
+
+**Key-leak defences** (per Oracle review):
+- `lib/steamPickems.ts:scrubKey()` strips the key out of every Valve
+  error body before it crosses the trust boundary. Errors thrown to
+  the route are generic ("Steam upstream error") with the scrubbed
+  detail logged server-side only.
+- Process-wide outbound budget: 60 calls/min + 20k/day across all
+  users. Enforced in `consumeOutboundBudget()` before every outbound
+  call. Sits ON TOP of the per-(user, IP) 6/min route limiter.
+- Layout cached in-process for 1h per eventId so a single Major
+  doesn't burn more outbound calls than necessary.
+- `STEAM_PICKEM_EVENT_ID` is server-pinned; the API route does NOT
+  accept a client-supplied override (was an event-enumeration vector).
 
 ## Critical gotchas (don't relearn these)
 
@@ -329,11 +346,12 @@ railway variables --kv | grep KEY
 
 ## Active todos / followups
 
-- [ ] **Wait for Playoffs HLTV event ID** (or confirm it stays on `8301` like Stage 3). Once known, append `,PLAYOFFS:<id>` to `HLTV_STAGE_EVENTS` on the GH secret (Railway env is documentation-only — the cron sync reads from the GH secret).
+- [x] **Playoffs HLTV event ID set to `9029`** (2026-06-16). GH secret `HLTV_STAGE_EVENTS` updated to `STAGE_1:9028,STAGE_2:9029,STAGE_3:8301,PLAYOFFS:9029`. Same id as Stage 2 — Stage 2 is concluded so practical overlap should be nil, but watch for double-attributed matches in the next sync. Railway env not yet mirrored (CLI auth expired during this session).
 - [ ] **Owner: update `HLTV_STAGE_EVENTS` on Railway** to `STAGE_1:9028,STAGE_2:9029,STAGE_3:8301`. Cron runs from GH Actions so syncs work today; the Railway env only matters for `/api/sync` direct calls (Refresh button still dispatches GH).
 - [x] **Rotated Postgres password** (2026-06-14). Regenerated `POSTGRES_PASSWORD` via Railway's variable generator → Railway re-ALTERed the DB user + rebuilt templated `DATABASE_URL` / `DATABASE_PUBLIC_URL` → `pickems-app` redeployed via the `${{Postgres.DATABASE_URL}}` reference. GH Actions `DATABASE_URL` secret updated via `gh secret set`. All three sync workflows verified green afterward.
 - [x] **In-app friend system** (2026-06-15). Search-and-add friends by display name (no Steam API). `/friends` management page, `/users/[id]` profile with per-stage pick lock, leaderboard Friends-only toggle, avatar dropdown in Nav. See Data model + Security posture sections for full detail.
 - [x] **Steam linking on existing accounts** (2026-06-16). New `/api/auth/steam/link` + `/api/auth/steam/link/callback` routes let a signed-in email user attach a SteamID without creating a fresh row. `/api/auth/steam/unlink` POST detaches, but refuses if the user has no email+passwordHash fallback (would lock themselves out). UI lives in `SteamLinkPanel` on the viewer's own profile page. Conflict cases handled: already-yours, already-linked-to-current-user, SteamID owned by another user (P2002).
+- [x] **Pickem auto-import via Steam Web API** (2026-06-16). User pastes their per-Major "Major Auth Code" (`steamidkey`) from help.steampowered.com on `/pickems` (only visible when they have a linked SteamID). `/api/pickems/sync-steam` calls `ICSGOTournaments_730/GetTournamentLayout/v1` + `GetTournamentPredictions/v1`, stores raw JSON on `User.steamPickemRaw` (+ code on `steamPickemCode`), returns prediction count. **Mapping Valve's predictions -> our PickemPick rows is still a follow-up** — Valve's section/group/pickid numbering is undocumented and per-Major; we want to see one real prod response before committing to a mapping. Requires `STEAM_API_KEY` (set on Railway) and `STEAM_PICKEM_EVENT_ID` (Valve's per-Major event id, NOT HLTV's).
 - [ ] (Optional) Run `scripts/backfill-stage-names.ts` against prod
   to rewrite the stale "Challengers Stage" / "Legends Stage" /
   "Champions Stage" strings in `Stage.name` and drop the leftover
@@ -367,7 +385,10 @@ If you ever scale beyond a single Railway replica, move the in-memory limiter + 
 ## Things to NOT do
 
 - Don't bump Prisma to 7.x.
-- Don't add a server-wide `STEAM_API_KEY`. (User explicitly declined.)
+- Don't commit `STEAM_API_KEY` to git or expose it client-side (Next.js
+  inlines `NEXT_PUBLIC_*` into the browser bundle — keep this one
+  server-side only). It's set in Railway env. If leaked, Valve revokes
+  it and we have to regenerate.
 - Don't use `npm ci` in Railway builds (EBUSY). `npm install` is correct here.
 - Don't rely on `stage.name` for headings.
 - Don't expect HLTV `/results` to include team IDs.

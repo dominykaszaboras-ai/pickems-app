@@ -1,7 +1,9 @@
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
+import { prisma } from "@/lib/db";
 import { getActiveTournament, getUserPickem } from "@/lib/queries";
 import { PickemsForm } from "@/components/PickemsForm";
+import { SteamSyncCard } from "@/components/SteamSyncCard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,7 +26,14 @@ export default async function PickemsPage() {
     );
   }
 
-  const initial = await getUserPickem(userId, tournament.id);
+  const [initial, viewer] = await Promise.all([
+    getUserPickem(userId, tournament.id),
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: { steamId: true, steamPickemCode: true },
+    }),
+  ]);
+  const hasSteam = Boolean(viewer?.steamId);
 
   return (
     <main className="mx-auto max-w-5xl p-6">
@@ -32,6 +41,11 @@ export default async function PickemsPage() {
         <h1 className="text-2xl font-bold">{tournament.name}</h1>
         <p className="text-sm text-muted">Pickems</p>
       </header>
+      {hasSteam && (
+        <div className="mb-6">
+          <SteamSyncCard hasCodeOnFile={Boolean(viewer?.steamPickemCode)} />
+        </div>
+      )}
       <PickemsForm tournament={tournament} initial={initial} />
     </main>
   );

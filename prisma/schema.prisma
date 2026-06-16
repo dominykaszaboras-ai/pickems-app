@@ -21,6 +21,15 @@ model User {
   // Steam OpenID-verified SteamID64 (e.g. 76561198xxxxxxxxx). Optional so
   // email/password users still work.
   steamId       String?   @unique
+  // Per-user "Major Auth Code" (Valve's `steamidkey`). The user pastes
+  // this on /pickems; it authorizes us to call
+  // ICSGOTournaments_730/GetTournamentPredictions on their behalf.
+  // Not a secret of OUR system — Valve issues a new one per major and
+  // the user can rotate it via help.steampowered.com.
+  steamPickemCode String?
+  // Last raw GetTournamentPredictions JSON, useful for debugging the
+  // section/group/index mapping while it evolves per major.
+  steamPickemRaw  String?
   accounts      Account[]
   sessions      Session[]
   pickems       Pickem[]

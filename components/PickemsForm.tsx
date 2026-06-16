@@ -11,6 +11,7 @@ import {
   type StageKind,
 } from "@/lib/types";
 import { TeamLogo } from "./TeamLogo";
+import { PlayoffBracketPicker, type PlayoffPick } from "./PlayoffBracketPicker";
 
 type SwissPicks = {
   three_oh: string[];   // up to PERFECT_COUNT teams
@@ -38,6 +39,13 @@ export function PickemsForm({
   }
   const teamsFor = (k: StageKind): ClientTeam[] => stagesByKind.get(k) ?? [];
   const isUnlocked = (k: StageKind): boolean => (stagesByKind.get(k)?.length ?? 0) > 0;
+  // The QF matchups feed the bracket picker. Pulled from the PLAYOFFS stage's
+  // matches so the picker can show "Aurora vs BetBoom" etc. rather than just
+  // a flat list of teams.
+  const playoffStage = tournament.stages.find((s) => s.kind === "PLAYOFFS");
+  const qfMatches = (playoffStage?.matches ?? []).filter(
+    (m) => m.teamA && m.teamB,
+  );
   // Friendly "opens after X" copy for locked stages.
   const lockedReason: Record<StageKind, string> = {
     STAGE_1: "Stage 1 hasn't been synced yet.",
@@ -66,12 +74,19 @@ export function PickemsForm({
     return (p: SwissPicks) => setSwiss((prev) => ({ ...prev, [kind]: p }));
   }
 
-  const [playoffs, setPlayoffs] = useState<Record<number, string | null>>(() => {
-    const init: Record<number, string | null> = { 1: null, 2: null, 3: null, 4: null };
+  // Playoff picks: an array (NOT a map) so we can store multiple picks per
+  // round — 4 QF winners (round=1), 2 SF winners (round=2), 1 Final winner
+  // (round=3) plus the mirrored Champion (round=4). The previous map shape
+  // could only hold ONE pick per round, which was wrong for the Cologne
+  // 2026 format.
+  const [playoffs, setPlayoffs] = useState<PlayoffPick[]>(() => {
+    const out: PlayoffPick[] = [];
     for (const p of initial?.picks ?? []) {
-      if (p.kind === "PLAYOFF_WINNER" && p.round != null) init[p.round] = p.teamId;
+      if (p.kind === "PLAYOFF_WINNER" && p.round != null) {
+        out.push({ round: p.round, teamId: p.teamId });
+      }
     }
-    return init;
+    return out;
   });
 
   const [saving, setSaving] = useState(false);
@@ -85,8 +100,8 @@ export function PickemsForm({
       for (const t of sp.zero_three) out.push({ kind: "SWISS_0_3", stageKind, teamId: t, round: null });
       for (const t of sp.advance) out.push({ kind: "SWISS_ADVANCE", stageKind, teamId: t, round: null });
     }
-    for (const [round, teamId] of Object.entries(playoffs)) {
-      if (teamId) out.push({ kind: "PLAYOFF_WINNER", stageKind: "PLAYOFFS", teamId, round: Number(round) });
+    for (const { round, teamId } of playoffs) {
+      out.push({ kind: "PLAYOFF_WINNER", stageKind: "PLAYOFFS", teamId, round });
     }
     return out;
   }, [swiss, playoffs]);
@@ -127,7 +142,11 @@ export function PickemsForm({
         ),
       )}
       {isUnlocked("PLAYOFFS") ? (
-        <PlayoffsPicker teams={teamsFor("PLAYOFFS")} picks={playoffs} setPicks={setPlayoffs} />
+        <PlayoffBracketPicker
+          qfMatches={qfMatches}
+          picks={playoffs}
+          setPicks={setPlayoffs}
+        />
       ) : (
         <LockedStage title="Playoffs" reason={lockedReason.PLAYOFFS} />
       )}
@@ -264,46 +283,3 @@ function LockedStage({ title, reason }: { title: string; reason: string }) {
   );
 }
 
-function PlayoffsPicker({
-  teams,
-  picks,
-  setPicks,
-}: {
-  teams: ClientTeam[];
-  picks: Record<number, string | null>;
-  setPicks: (p: Record<number, string | null>) => void;
-}) {
-  return (
-    <section className="rounded-2xl border border-line bg-panel p-5">
-      <h2 className="mb-1 text-lg font-semibold">Champions Stage (Playoffs)</h2>
-      <p className="mb-4 text-sm text-muted">
-        QF winner = <span className="text-accent">1 pt</span>, SF ={" "}
-        <span className="text-accent">2 pts</span>, Final ={" "}
-        <span className="text-accent">4 pts</span>. Pick the champion last.
-      </p>
-
-      {[
-        { round: 1, label: "Quarter-finals" },
-        { round: 2, label: "Semi-finals" },
-        { round: 3, label: "Grand Final" },
-        { round: 4, label: "Champion" },
-      ].map(({ round, label }) => (
-        <div key={round} className="mb-4">
-          <div className="mb-2 text-sm font-medium text-muted">{label}</div>
-          <select
-            className="w-full rounded-lg border border-line bg-panel2 px-3 py-2"
-            value={picks[round] ?? ""}
-            onChange={(e) => setPicks({ ...picks, [round]: e.target.value || null })}
-          >
-            <option value="">— pick a team —</option>
-            {teams.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
-        </div>
-      ))}
-    </section>
-  );
-}

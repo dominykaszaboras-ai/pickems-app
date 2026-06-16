@@ -114,6 +114,7 @@ scripts/
   sync-schedule.ts               Daily Liquipedia schedule + broadcast sync (npm run sync-schedule)
   probe-event.ts                 Diagnostic: HLTV event ID discovery (ids/find/scan/stage modes)
   probe-liquipedia.ts            Diagnostic: dry-run Liquipedia parser (parse/raw/snippet modes)
+  probe-steam-pickem.ts          Diagnostic: enumerate Valve pickem event IDs via GetTournamentLayout/v1 (no DB; needs STEAM_API_KEY)
   inspect-teams.ts               Diagnostic: teams per stage
   inspect-pickems.ts             Diagnostic: dump saved picks with team names
   migrate-stage-kinds.ts         One-off: rename CHALLENGERS→STAGE_1 etc (run; idempotent)
@@ -154,6 +155,44 @@ scripts/
   - `SWISS_0_3` symmetric: wrong as soon as `wins >= 1`.
   - `SWISS_ADVANCE` right only if `status === ADVANCED && losses >= 1`
     (3-1 / 3-2). A 3-0 team does NOT satisfy ADV — it only satisfies 3-0.
+
+## Valve pickem event ID (per-major)
+
+Valve has its own internal numeric event id per Major, separate from
+HLTV's. Found via `scripts/probe-steam-pickem.ts` (enumerates `GetTournamentLayout/v1`):
+
+| Major | Valve event id |
+|---|---|
+| StarLadder Budapest 2025 | `25` |
+| IEM Cologne 2026 | **`26`** (currently set on Railway as `STEAM_PICKEM_EVENT_ID`) |
+
+Layout schema we observed for event 26 — use this when building the
+mapper:
+
+```
+result:
+  event: 26
+  name: "IEM Cologne 2026 CS2 Major Championship"
+  teams: [ { pickid, logo, name } ]  // ~32 entries; pickid IS the stable team id
+  sections: [
+    { sectionid: 105, name: "Stage I | 1",     groups: [ { groupid: 271, picks: [10 slots] } ] },
+    { sectionid: 106, name: "Stage II | 2",    groups: [ { groupid: 272, picks: [10 slots] } ] },
+    { sectionid: 107, name: "Stage III | 3",   groups: [ { groupid: 273, picks: [10 slots] } ] },
+    { sectionid: 108, name: "Quarterfinals",   groups: [ 4 × 1-slot ] },  // groupids 274-277
+    { sectionid: 109, name: "Semifinals",      groups: [ 2 × 1-slot ] },  // groupids 278-279
+    { sectionid: 110, name: "Grand Final",     groups: [ 1 × 1-slot ] },  // groupid 280
+  ]
+```
+
+Each slot is `{ index, pickids: number[] }`. In `GetTournamentLayout`,
+`pickids` is empty; in `GetTournamentPredictions` it's filled with the
+team's `pickid` from the top-level `teams` array.
+
+**Assumed but unconfirmed** (verify with a real predictions response):
+- Stage I/II/III index ordering: `[0,1]` are 3-0, `[2,3]` are 0-3, `[4..9]` are advance. Common across recent Majors but Valve's docs are silent.
+- QF groups 274-277 = the four QF matches in bracket order; SF groups
+  278-279 = the two SF matches; GF group 280 = the winner of the Major
+  (our `PLAYOFF_WINNER` with `round=4`).
 
 ## HLTV event IDs (per-major data)
 
@@ -310,6 +349,11 @@ npx tsx scripts/probe-event.ts stage 8301 STAGE_3
 npx tsx scripts/probe-liquipedia.ts
 npx tsx scripts/probe-liquipedia.ts snippet
 
+# Diagnostics — Valve pickem event ID hunt (no DB; needs STEAM_API_KEY)
+STEAM_API_KEY="..." npx tsx scripts/probe-steam-pickem.ts            # range 1..40
+STEAM_API_KEY="..." npx tsx scripts/probe-steam-pickem.ts 20 60      # custom range
+STEAM_API_KEY="..." npx tsx scripts/probe-steam-pickem.ts 26         # dump full JSON for one id
+
 # Diagnostics — DB inspection
 DATABASE_URL="..." npx tsx scripts/inspect-teams.ts
 DATABASE_URL="..." npx tsx scripts/inspect-pickems.ts
@@ -351,7 +395,9 @@ railway variables --kv | grep KEY
 - [x] **Rotated Postgres password** (2026-06-14). Regenerated `POSTGRES_PASSWORD` via Railway's variable generator → Railway re-ALTERed the DB user + rebuilt templated `DATABASE_URL` / `DATABASE_PUBLIC_URL` → `pickems-app` redeployed via the `${{Postgres.DATABASE_URL}}` reference. GH Actions `DATABASE_URL` secret updated via `gh secret set`. All three sync workflows verified green afterward.
 - [x] **In-app friend system** (2026-06-15). Search-and-add friends by display name (no Steam API). `/friends` management page, `/users/[id]` profile with per-stage pick lock, leaderboard Friends-only toggle, avatar dropdown in Nav. See Data model + Security posture sections for full detail.
 - [x] **Steam linking on existing accounts** (2026-06-16). New `/api/auth/steam/link` + `/api/auth/steam/link/callback` routes let a signed-in email user attach a SteamID without creating a fresh row. `/api/auth/steam/unlink` POST detaches, but refuses if the user has no email+passwordHash fallback (would lock themselves out). UI lives in `SteamLinkPanel` on the viewer's own profile page. Conflict cases handled: already-yours, already-linked-to-current-user, SteamID owned by another user (P2002).
-- [x] **Pickem auto-import via Steam Web API** (2026-06-16). User pastes their per-Major "Major Auth Code" (`steamidkey`) from help.steampowered.com on `/pickems` (only visible when they have a linked SteamID). `/api/pickems/sync-steam` calls `ICSGOTournaments_730/GetTournamentLayout/v1` + `GetTournamentPredictions/v1`, stores raw JSON on `User.steamPickemRaw` (+ code on `steamPickemCode`), returns prediction count. **Mapping Valve's predictions -> our PickemPick rows is still a follow-up** — Valve's section/group/pickid numbering is undocumented and per-Major; we want to see one real prod response before committing to a mapping. Requires `STEAM_API_KEY` (set on Railway) and `STEAM_PICKEM_EVENT_ID` (Valve's per-Major event id, NOT HLTV's).
+- [x] **Pickem auto-import via Steam Web API** (2026-06-16). User pastes their per-Major "Major Auth Code" (`steamidkey`) from help.steampowered.com on `/pickems` (only visible when they have a linked SteamID). `/api/pickems/sync-steam` calls `ICSGOTournaments_730/GetTournamentLayout/v1` + `GetTournamentPredictions/v1`, stores raw JSON on `User.steamPickemRaw` (+ code on `steamPickemCode`), returns prediction count. **Mapping Valve's predictions -> our PickemPick rows is the active Phase 2 work** — layout schema is known (below), but we need one real `GetTournamentPredictions` response (i.e. someone pastes their auth code) to confirm the index→kind ordering before committing to it. `STEAM_API_KEY` and `STEAM_PICKEM_EVENT_ID=26` set on Railway (2026-06-16).
+- [ ] **Phase 2 — Valve <-> PickemPick mapper**. Read direction first (Steam predictions -> PickemPick rows on `/api/pickems/sync-steam` success), then write direction (PickemPick rows -> POST `UploadTournamentPredictions/v1` on `/api/pickems` save). Requires the team-pickid map (we have a name -> pickid table from `GetTournamentLayout/v1`; match against `Team.name` via `normalizeTeamName`), and the Stage-index ordering (Stage I/II/III have 10 picks each; assumption is `[0,1]=3-0`, `[2,3]=0-3`, `[4..9]=advance` but needs a real response to confirm).
+- [ ] **Phase 3 — write-back on pickem save**. Once the read mapper is verified, POST `UploadTournamentPredictions/v1` on every `/api/pickems` save when the user has Steam linked + auth code on file. Best-effort: webapp save succeeds even if Steam upload fails, with a warning surfaced to the user. Opt-out toggle on the PickemsForm.
 - [ ] (Optional) Run `scripts/backfill-stage-names.ts` against prod
   to rewrite the stale "Challengers Stage" / "Legends Stage" /
   "Champions Stage" strings in `Stage.name` and drop the leftover

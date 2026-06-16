@@ -12,8 +12,21 @@ const STEAM_HELP_URL =
   "https://help.steampowered.com/en/wizard/HelpWithGameIssue/?appid=730&issueid=128";
 
 type SyncResult =
-  | { ok: true; predictionsCount?: number; note?: string }
+  | {
+      ok: true;
+      predictionsCount?: number;
+      appliedCount?: number;
+      stagesApplied?: string[];
+      note?: string;
+    }
   | { ok: false; error: string };
+
+const STAGE_LABELS: Record<string, string> = {
+  STAGE_1: "Stage 1",
+  STAGE_2: "Stage 2",
+  STAGE_3: "Stage 3",
+  PLAYOFFS: "Playoffs",
+};
 
 export function SteamSyncCard({
   hasCodeOnFile,
@@ -107,7 +120,25 @@ export function SteamSyncCard({
         >
           {result.ok ? (
             <>
-              <div>✓ Pulled {result.predictionsCount ?? 0} prediction(s) from Steam.</div>
+              <div>
+                ✓ Pulled {result.predictionsCount ?? 0} prediction(s) from Steam
+                {typeof result.appliedCount === "number" &&
+                result.appliedCount > 0 ? (
+                  <>
+                    {" "}— applied {result.appliedCount} to your form
+                    {result.stagesApplied && result.stagesApplied.length > 0 ? (
+                      <>
+                        {" "}(
+                        {result.stagesApplied
+                          .map((s) => STAGE_LABELS[s] ?? s)
+                          .join(", ")}
+                        )
+                      </>
+                    ) : null}
+                  </>
+                ) : null}
+                .
+              </div>
               {result.note && (
                 <div className="mt-1 text-xs text-muted">{result.note}</div>
               )}

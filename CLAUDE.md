@@ -188,11 +188,11 @@ Each slot is `{ index, pickids: number[] }`. In `GetTournamentLayout`,
 `pickids` is empty; in `GetTournamentPredictions` it's filled with the
 team's `pickid` from the top-level `teams` array.
 
-**Assumed but unconfirmed** (verify with a real predictions response):
-- Stage I/II/III index ordering: `[0,1]` are 3-0, `[2,3]` are 0-3, `[4..9]` are advance. Common across recent Majors but Valve's docs are silent.
-- QF groups 274-277 = the four QF matches in bracket order; SF groups
-  278-279 = the two SF matches; GF group 280 = the winner of the Major
-  (our `PLAYOFF_WINNER` with `round=4`).
+**Confirmed against a real GetTournamentPredictions response (2026-06-16):**
+- Stage I/II/III index ordering: `[0, 1]` are SWISS_3_0, `[2..7]` are SWISS_ADVANCE, `[8, 9]` are SWISS_0_3.
+- Predictions response shape is `{ result: { picks: [ { groupid, index, pick } ] } }` — NOT `result.predictions`, and field name is `pick` not `pickid`. `extractPredictions` checks both shapes.
+- Grand Final groupid=280 stores ONE team — the user's pick for who wins the Major. Our read mapper duplicates it into BOTH `PLAYOFF_WINNER round=3` (Final match) and `round=4` (Champion) since they're necessarily the same team.
+- QF/SF/GF group ids 274-280 follow bracket order, but our scoring doesn't actually need to know which specific QF match — only the team and the round.
 
 ## HLTV event IDs (per-major data)
 
@@ -396,7 +396,7 @@ railway variables --kv | grep KEY
 - [x] **In-app friend system** (2026-06-15). Search-and-add friends by display name (no Steam API). `/friends` management page, `/users/[id]` profile with per-stage pick lock, leaderboard Friends-only toggle, avatar dropdown in Nav. See Data model + Security posture sections for full detail.
 - [x] **Steam linking on existing accounts** (2026-06-16). New `/api/auth/steam/link` + `/api/auth/steam/link/callback` routes let a signed-in email user attach a SteamID without creating a fresh row. `/api/auth/steam/unlink` POST detaches, but refuses if the user has no email+passwordHash fallback (would lock themselves out). UI lives in `SteamLinkPanel` on the viewer's own profile page. Conflict cases handled: already-yours, already-linked-to-current-user, SteamID owned by another user (P2002).
 - [x] **Pickem auto-import via Steam Web API** (2026-06-16). User pastes their per-Major "Major Auth Code" (`steamidkey`) from help.steampowered.com on `/pickems` (only visible when they have a linked SteamID). `/api/pickems/sync-steam` calls `ICSGOTournaments_730/GetTournamentLayout/v1` + `GetTournamentPredictions/v1`, stores raw JSON on `User.steamPickemRaw` (+ code on `steamPickemCode`), returns prediction count. **Mapping Valve's predictions -> our PickemPick rows is the active Phase 2 work** — layout schema is known (below), but we need one real `GetTournamentPredictions` response (i.e. someone pastes their auth code) to confirm the index→kind ordering before committing to it. `STEAM_API_KEY` and `STEAM_PICKEM_EVENT_ID=26` set on Railway (2026-06-16).
-- [ ] **Phase 2 — Valve <-> PickemPick mapper**. Read direction first (Steam predictions -> PickemPick rows on `/api/pickems/sync-steam` success), then write direction (PickemPick rows -> POST `UploadTournamentPredictions/v1` on `/api/pickems` save). Requires the team-pickid map (we have a name -> pickid table from `GetTournamentLayout/v1`; match against `Team.name` via `normalizeTeamName`), and the Stage-index ordering (Stage I/II/III have 10 picks each; assumption is `[0,1]=3-0`, `[2,3]=0-3`, `[4..9]=advance` but needs a real response to confirm).
+- [x] **Phase 2 — Valve -> PickemPick read mapper** (2026-06-16). `lib/steamPickems.ts` ships `parseSteamLayout()` (turns `GetTournamentLayout` JSON into `{byPickid, bySlot}`) and `steamPicksToLocal()` (predictions array + team name map -> our PickemPick rows). Confirmed against a real Cologne 2026 response: index ordering is `[0,1]=3-0`, `[2..7]=advance`, `[8,9]=0-3` (NOT the `[2,3]=0-3` I'd assumed). Section names matched by substring ("Stage I", "Quarterfinals", "Grand Final"). Grand Final pick is duplicated into round=3 (Final) AND round=4 (Champion). `/api/pickems/sync-steam` now writes mapped picks straight to PickemPick rows, replacing ONLY the stages Steam returned (preserves locally-entered picks for stages Steam doesn't have yet, e.g. playoffs not open).
 - [ ] **Phase 3 — write-back on pickem save**. Once the read mapper is verified, POST `UploadTournamentPredictions/v1` on every `/api/pickems` save when the user has Steam linked + auth code on file. Best-effort: webapp save succeeds even if Steam upload fails, with a warning surfaced to the user. Opt-out toggle on the PickemsForm.
 - [ ] (Optional) Run `scripts/backfill-stage-names.ts` against prod
   to rewrite the stale "Challengers Stage" / "Legends Stage" /

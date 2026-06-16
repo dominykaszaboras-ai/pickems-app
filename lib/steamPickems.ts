@@ -157,17 +157,24 @@ export async function getTournamentPredictions(
   return r.json();
 }
 
-// Pull out the predictions array from whatever shape Valve returned. Recent
-// payloads have looked like { result: { predictions: [...] } } but the wiki
-// has shown a few variants over majors, so we look in a few likely places.
+// Pull out the predictions array from whatever shape Valve returned.
+//
+// For IEM Cologne 2026 (confirmed against a real response) the shape is:
+//   { result: { picks: [ { groupid, index, pick } ] } }
+//
+// Older Majors used `predictions` / `tournament_predictions`, and per-pick
+// field names of `pickid` / `pick_id` / `teamid`. We check every variant we
+// know of so we don't silently return 0.
 //
 // IMPORTANT: we keep zero-valued ids — Valve has used 0-based group indices
 // in past majors and filtering on truthy would drop the first group silently.
 export function extractPredictions(raw: unknown): SteamPickemPrediction[] {
   const r = raw as any;
   const candidates: any[] = [
+    r?.result?.picks, // Cologne 2026
     r?.result?.predictions,
     r?.result?.tournament_predictions,
+    r?.picks,
     r?.predictions,
     r?.tournament_predictions,
   ];
@@ -177,7 +184,9 @@ export function extractPredictions(raw: unknown): SteamPickemPrediction[] {
       for (const p of c) {
         const groupid = numOrNull(p?.groupid ?? p?.group_id ?? p?.section);
         const index = numOrNull(p?.index ?? p?.idx) ?? 0;
-        const pickid = numOrNull(p?.pickid ?? p?.pick_id ?? p?.teamid);
+        const pickid = numOrNull(
+          p?.pick ?? p?.pickid ?? p?.pick_id ?? p?.teamid,
+        );
         if (groupid == null || pickid == null) continue;
         out.push({
           groupid,
@@ -203,4 +212,161 @@ function numOrNull(v: unknown): number | null {
   if (v === null || v === undefined || v === "") return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+// --- Layout slot map ---------------------------------------------------------
+//
+// Turn a GetTournamentLayout response into structures the mapper needs:
+//   - byPickid: Steam team id (`pickid` from layout.teams) -> team name
+//   - bySlot:   `${groupid}:${index}` -> { stageKind, slotKind, round? }
+//
+// Section names we observed for event 26 (Cologne 2026):
+//   "Stage I | 1", "Stage II | 2", "Stage III | 3",
+//   "Quarterfinals | 4", "Semifinals | 5", "Grand Final | 6"
+// We match by substring so future Majors with the same naming convention
+// work without code changes.
+//
+// Swiss index ordering (confirmed empirically against a real predictions
+// response on 2026-06-16):
+//   [0, 1]      -> SWISS_3_0
+//   [2, 3, 4, 5, 6, 7] -> SWISS_ADVANCE
+//   [8, 9]      -> SWISS_0_3
+
+import type { PickKind, StageKind } from "./types";
+
+export interface SteamLayoutParsed {
+  byPickid: Map<number, string>;
+  bySlot: Map<string, { stageKind: StageKind; pickKind: PickKind; round: number | null }>;
+}
+
+export function parseSteamLayout(layout: unknown): SteamLayoutParsed {
+  const r = (layout as any)?.result ?? layout ?? {};
+  const byPickid = new Map<number, string>();
+  for (const t of (r.teams ?? []) as Array<{ pickid?: number; name?: string }>) {
+    if (t.pickid != null && typeof t.name === "string" && t.name) {
+      byPickid.set(Number(t.pickid), t.name);
+    }
+  }
+
+  const bySlot = new Map<
+    string,
+    { stageKind: StageKind; pickKind: PickKind; round: number | null }
+  >();
+
+  for (const s of (r.sections ?? []) as Array<{
+    name?: string;
+    groups?: Array<{ groupid?: number; picks?: Array<{ index?: number }> }>;
+  }>) {
+    const sName = String(s.name ?? "");
+    const stage = detectStage(sName);
+    if (!stage) continue;
+
+    for (const g of s.groups ?? []) {
+      const groupid = Number(g.groupid);
+      if (!Number.isFinite(groupid)) continue;
+      const picks = g.picks ?? [];
+      for (const p of picks) {
+        const idx = Number(p.index ?? 0);
+        let pickKind: PickKind;
+        let round: number | null = stage.round ?? null;
+        if (stage.kind === "PLAYOFFS") {
+          pickKind = "PLAYOFF_WINNER";
+        } else if (idx <= 1) {
+          pickKind = "SWISS_3_0";
+        } else if (idx >= 8) {
+          pickKind = "SWISS_0_3";
+        } else {
+          pickKind = "SWISS_ADVANCE";
+        }
+        bySlot.set(`${groupid}:${idx}`, { stageKind: stage.kind, pickKind, round });
+      }
+    }
+  }
+
+  return { byPickid, bySlot };
+}
+
+function detectStage(
+  name: string,
+): { kind: StageKind; round?: number } | null {
+  const n = name.toLowerCase();
+  // Order matters: check long-form before short-form to avoid "Stage I" eating "Stage III".
+  if (/stage\s*iii\b|stage\s*3\b/.test(n)) return { kind: "STAGE_3" };
+  if (/stage\s*ii\b|stage\s*2\b/.test(n)) return { kind: "STAGE_2" };
+  if (/stage\s*i\b|stage\s*1\b/.test(n)) return { kind: "STAGE_1" };
+  if (/quarterfinal/.test(n)) return { kind: "PLAYOFFS", round: 1 };
+  if (/semifinal/.test(n)) return { kind: "PLAYOFFS", round: 2 };
+  if (/grand\s*final|grandfinal|^final\b/.test(n)) return { kind: "PLAYOFFS", round: 4 };
+  return null;
+}
+
+// Convert a parsed layout + predictions list into our PickemPick shape.
+// `teamIdByNormalizedName` is a precomputed lookup so callers can avoid a
+// DB call per pick — pass `new Map(teams.map(t => [normalizeTeamName(t.name), t.id]))`.
+//
+// Unknown teams / unknown slots are skipped silently (logged) — better to
+// import 28 out of 30 picks than to fail the whole sync because Valve added
+// a team we haven't synced yet.
+//
+// Grand-Final treatment: Valve stores one Final pick (= the champion). Our
+// schema separates round=3 (Final match winner) from round=4 (Champion). We
+// emit BOTH rows pointing at the same team so both display + scoring lights up.
+export function steamPicksToLocal(
+  parsed: SteamLayoutParsed,
+  picks: SteamPickemPrediction[],
+  teamIdByNormalizedName: Map<string, string>,
+  normalize: (name: string) => string,
+): Array<{
+  kind: PickKind;
+  stageKind: StageKind;
+  teamId: string;
+  round: number | null;
+}> {
+  const out: Array<{
+    kind: PickKind;
+    stageKind: StageKind;
+    teamId: string;
+    round: number | null;
+  }> = [];
+  let unmatchedTeams = 0;
+  let unmatchedSlots = 0;
+  for (const p of picks) {
+    const slot = parsed.bySlot.get(`${p.groupid}:${p.index}`);
+    if (!slot) {
+      unmatchedSlots++;
+      continue;
+    }
+    const steamName = parsed.byPickid.get(p.pickid);
+    if (!steamName) {
+      unmatchedTeams++;
+      continue;
+    }
+    const teamId = teamIdByNormalizedName.get(normalize(steamName));
+    if (!teamId) {
+      unmatchedTeams++;
+      console.warn(`[steamPickems] no local team for Steam name "${steamName}"`);
+      continue;
+    }
+    out.push({
+      kind: slot.pickKind,
+      stageKind: slot.stageKind,
+      teamId,
+      round: slot.round,
+    });
+    // Champion row mirrors Grand-Final pick.
+    if (slot.stageKind === "PLAYOFFS" && slot.round === 4) {
+      out.push({
+        kind: slot.pickKind,
+        stageKind: slot.stageKind,
+        teamId,
+        round: 3, // Final match winner = same team
+      });
+    }
+  }
+  if (unmatchedTeams || unmatchedSlots) {
+    console.warn(
+      `[steamPickems] mapper skipped ${unmatchedSlots} unknown slot(s) and ${unmatchedTeams} unknown team(s)`,
+    );
+  }
+  return out;
 }

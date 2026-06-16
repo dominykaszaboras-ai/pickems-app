@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { getActiveTournament, getUserPickem } from "@/lib/queries";
 import { PickemsForm } from "@/components/PickemsForm";
@@ -30,7 +31,7 @@ export default async function PickemsPage() {
     getUserPickem(userId, tournament.id),
     prisma.user.findUnique({
       where: { id: userId },
-      select: { steamId: true, steamPickemCode: true },
+      select: { id: true, steamId: true, steamPickemCode: true },
     }),
   ]);
   const hasSteam = Boolean(viewer?.steamId);
@@ -41,10 +42,24 @@ export default async function PickemsPage() {
         <h1 className="text-2xl font-bold">{tournament.name}</h1>
         <p className="text-sm text-muted">Pickems</p>
       </header>
-      {hasSteam && (
+      {hasSteam ? (
         <div className="mb-6">
           <SteamSyncCard hasCodeOnFile={Boolean(viewer?.steamPickemCode)} />
         </div>
+      ) : (
+        viewer && (
+          <div className="mb-6 flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-panel/60 px-4 py-3 text-sm">
+            <span className="text-muted">
+              💡 Link your Steam account to auto-import the picks you submitted in-game.
+            </span>
+            <Link
+              href={`/users/${viewer.id}`}
+              className="rounded-md bg-panel2 px-3 py-1 text-xs font-medium hover:bg-line"
+            >
+              Link Steam →
+            </Link>
+          </div>
+        )
       )}
       <PickemsForm tournament={tournament} initial={initial} />
     </main>

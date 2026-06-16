@@ -165,7 +165,7 @@ Cologne 2026 splits SOME stages into their own HLTV event; Stage 3 lives on the 
 | Stage 1 | `9028` | Concluded |
 | Stage 2 | `9029` | Concluded |
 | Stage 3 | `8301` | **No separate sub-event — matches live directly on the umbrella.** `fetchStageMatches(8301, STAGE_3)` filters by event.id; Stage 1/2 matches live under 9028/9029 so there's no overlap. |
-| Playoffs | `9029` (per 2026-06-16) | **Same HLTV event id as Stage 2.** Stage 2 is concluded so practical overlap is low, but be aware `fetchStageMatches` will see both stages' matches via id 9029 and rely on the `stageKind` arg to attribute them correctly. If we see double-counts, switch playoffs to its own id (probe with `scripts/probe-event.ts`). |
+| Playoffs | **Liquipedia-only** (no HLTV stage id) | HLTV bundles playoffs under the same umbrella id (8301) as Stage 3, and `fetchStageMatches` only filters by event id (then force-tags `stageKind`), so adding `PLAYOFFS:8301` would double-write every match. Playoff bracket data is pulled exclusively from Liquipedia via `fetchSchedule(COLOGNE_2026_LIQUIPEDIA)` — the `PLAYOFFS` entry there points to `Intel_Extreme_Masters/2026/Cologne/Playoffs`. Verified working: parser returns all 4 QFs (2026-06-18). Live scores still adopt from HLTV via ghost-matching by team+time. |
 
 `HLTV_EVENT_ID` env var holds the umbrella. `HLTV_STAGE_EVENTS` is a
 comma-separated `KIND:ID` map parsed by `lib/sync.ts:parseStageEvents`.
@@ -346,7 +346,7 @@ railway variables --kv | grep KEY
 
 ## Active todos / followups
 
-- [x] **Playoffs HLTV event ID set to `9029`** (2026-06-16). GH secret `HLTV_STAGE_EVENTS` updated to `STAGE_1:9028,STAGE_2:9029,STAGE_3:8301,PLAYOFFS:9029`. Same id as Stage 2 — Stage 2 is concluded so practical overlap should be nil, but watch for double-attributed matches in the next sync. Railway env not yet mirrored (CLI auth expired during this session).
+- [x] **Playoffs sourced from Liquipedia** (2026-06-16). HLTV doesn't separate playoffs from Stage 3 (both at event 8301) and `fetchStageMatches` would double-write — so `PLAYOFFS` is NOT in `HLTV_STAGE_EVENTS` anymore (reverted to `STAGE_1:9028,STAGE_2:9029,STAGE_3:8301` on both GH secret + Railway env). `COLOGNE_2026_LIQUIPEDIA.PLAYOFFS` already points at the right wiki page; the existing `parseLiquipediaMatches` parser handles the playoff bracket HTML and returns all 4 QFs. Live scores still adopt from HLTV via ghost-matching by team+time.
 - [ ] **Owner: update `HLTV_STAGE_EVENTS` on Railway** to `STAGE_1:9028,STAGE_2:9029,STAGE_3:8301`. Cron runs from GH Actions so syncs work today; the Railway env only matters for `/api/sync` direct calls (Refresh button still dispatches GH).
 - [x] **Rotated Postgres password** (2026-06-14). Regenerated `POSTGRES_PASSWORD` via Railway's variable generator → Railway re-ALTERed the DB user + rebuilt templated `DATABASE_URL` / `DATABASE_PUBLIC_URL` → `pickems-app` redeployed via the `${{Postgres.DATABASE_URL}}` reference. GH Actions `DATABASE_URL` secret updated via `gh secret set`. All three sync workflows verified green afterward.
 - [x] **In-app friend system** (2026-06-15). Search-and-add friends by display name (no Steam API). `/friends` management page, `/users/[id]` profile with per-stage pick lock, leaderboard Friends-only toggle, avatar dropdown in Nav. See Data model + Security posture sections for full detail.

@@ -8,6 +8,7 @@ import clsx from "clsx";
 import type { ClientStage, ClientTeam, StageKind } from "@/lib/types";
 import type { ScoreLine } from "@/lib/scoring";
 import { TeamLogo } from "./TeamLogo";
+import { PlayoffPickBracket } from "./PlayoffPickBracket";
 
 const KIND_LABEL: Record<string, string> = {
   SWISS_3_0: "3-0",
@@ -32,6 +33,30 @@ export function PickSummary({
       <div className="rounded-xl border border-dashed border-line bg-panel/40 p-3 text-xs text-muted">
         You haven't picked anything for this stage yet —{" "}
         <a className="text-accent underline" href="/pickems">submit picks</a>.
+      </div>
+    );
+  }
+
+  // Playoffs render as a mini bracket — the chip list doesn't convey the
+  // QF -> SF -> Final -> Champion progression. Swiss stages use the
+  // existing kind-grouped list because that layout matches how the picks
+  // are actually scored.
+  if (stage.kind === "PLAYOFFS") {
+    const stageTotal = picksForStage.reduce((sum, p) => sum + p.points, 0);
+    return (
+      <div className="rounded-xl border border-line bg-panel2/60 p-3">
+        <div className="mb-2 flex items-center justify-between">
+          <div className="text-xs font-semibold uppercase text-muted">Your picks</div>
+          <div className="font-mono text-sm">
+            <span className="text-accent">{stageTotal}</span>
+            <span className="text-muted"> pts this stage</span>
+          </div>
+        </div>
+        <PlayoffPickBracket
+          stage={stage}
+          score={score}
+          teamsById={teamsById}
+        />
       </div>
     );
   }

@@ -74,7 +74,7 @@ components/
   SwissStage.tsx                 Single Swiss stage (Rounds | Pools toggle, hidden by default)
   SwissPoolView.tsx              majors.im-style W-L pool layout
   PlayoffBracket.tsx             Playoff bracket (display + simulator on /bracket)
-  PlayoffBracketPicker.tsx       Click-to-advance bracket UI on /pickems form (4 QF -> 2 SF -> 1 Final + Champion)
+  PlayoffBracketPicker.tsx       Click-to-advance bracket UI on /pickems form (4 QF -> 2 SF -> 1 Final + Champion)\n  PlayoffPickBracket.tsx         Read-only mini bracket shown inside PickSummary when stage.kind === \"PLAYOFFS\"
   MatchCard.tsx                  Single match (click to simulate, HLTV ↗, TW/YT)
   PickSummary.tsx                User's picks with correctness per stage
   PickemsForm.tsx                Pick submission UI (locks unstarted stages)

@@ -122,10 +122,17 @@ export default async function ProfilePage({ params }: { params: { id: string } }
 
       {viewerId === profile.id && (
         <div className="mb-6 flex flex-col gap-3">
-          <SteamLinkPanel
-            hasSteam={Boolean(profile.steamId)}
-            hasFallback={Boolean(profile.email && profile.passwordHash)}
-          />
+          {/* Only show "Link Steam / Unlink Steam" for users who have an
+              email-based account. Steam-only sign-ins obviously have Steam
+              linked, and they can't unlink (no email+password fallback) so
+              the panel would just show a disabled button with an unhelpful
+              "set an email first" hint. */}
+          {profile.email && (
+            <SteamLinkPanel
+              hasSteam={Boolean(profile.steamId)}
+              hasFallback={Boolean(profile.email && profile.passwordHash)}
+            />
+          )}
           {profile.steamId && (
             <SteamCodePanel
               hasCodeOnFile={Boolean(profile.steamPickemCode)}

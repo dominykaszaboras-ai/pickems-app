@@ -20,6 +20,8 @@ import { scorePickem } from "@/lib/scoring";
 import { PickSummary } from "@/components/PickSummary";
 import { FriendButton, type ProfileFriendStatus } from "@/components/FriendButton";
 import { SteamLinkPanel } from "@/components/SteamLinkPanel";
+import { SteamCodePanel } from "@/components/SteamCodePanel";
+import { MedalBadge } from "@/components/MedalBadge";
 import { loadFriendGraph, statusOf } from "@/lib/friends";
 import { STAGE_LABEL, type ClientTeam, type StageKind } from "@/lib/types";
 
@@ -39,6 +41,11 @@ export default async function ProfilePage({ params }: { params: { id: string } }
       steamId: true,
       email: true,
       passwordHash: true,
+      // Only used when the viewer is looking at their own profile (gated
+      // below). Even though these cross the wire, the values are reduced
+      // to a boolean / timestamp before being rendered.
+      steamPickemCode: true,
+      steamPickemRaw: true,
     },
   });
   if (!profile) notFound();
@@ -114,11 +121,25 @@ export default async function ProfilePage({ params }: { params: { id: string } }
       </div>
 
       {viewerId === profile.id && (
-        <div className="mb-6">
+        <div className="mb-6 flex flex-col gap-3">
           <SteamLinkPanel
             hasSteam={Boolean(profile.steamId)}
             hasFallback={Boolean(profile.email && profile.passwordHash)}
           />
+          {profile.steamId && (
+            <SteamCodePanel
+              hasCodeOnFile={Boolean(profile.steamPickemCode)}
+              lastSyncedAt={(() => {
+                if (!profile.steamPickemRaw) return null;
+                try {
+                  const parsed = JSON.parse(profile.steamPickemRaw);
+                  return typeof parsed?.at === "string" ? parsed.at : null;
+                } catch {
+                  return null;
+                }
+              })()}
+            />
+          )}
         </div>
       )}
 
@@ -137,9 +158,10 @@ export default async function ProfilePage({ params }: { params: { id: string } }
       {tournament && pickem && score && (
         <section className="flex flex-col gap-6">
           <div className="rounded-2xl border border-line bg-panel p-4">
-            <div className="mb-2 text-xs uppercase text-muted">Score · {tournament.name}</div>
+            <div className="mb-2 text-xs uppercase text-muted">Correct picks · {tournament.name}</div>
             <div className="flex items-baseline gap-6">
               <div className="font-mono text-3xl text-accent">{score.total}</div>
+              <MedalBadge correct={score.total} size="lg" showLabel />
               <div className="flex flex-wrap gap-3 text-xs text-muted">
                 <StageScore label="S1" value={score.byStage.STAGE_1} />
                 <StageScore label="S2" value={score.byStage.STAGE_2} />

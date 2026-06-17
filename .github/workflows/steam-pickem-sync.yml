@@ -1,0 +1,33 @@
+name: Steam pickem sync
+
+# Bidirectional sync between our DB and Valve's pickem system.
+#   - Pull: imports picks the user made in CS2 / counter-strike.net
+#   - Push: re-attempts upload of locally-saved picks that Valve hadn't
+#           accepted yet (e.g. playoff window opens later)
+# Runs every 6h — Valve's quota is generous and we want the playoff
+# window to be discovered promptly when it opens. Bumping more
+# frequently risks burning our 100k/day key quota when the user count
+# grows.
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: npx prisma generate
+      - run: npx tsx scripts/steam-pickem-sync.ts
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
+          STEAM_PICKEM_EVENT_ID: ${{ secrets.STEAM_PICKEM_EVENT_ID }}
+          HLTV_EVENT_ID: ${{ secrets.HLTV_EVENT_ID }}

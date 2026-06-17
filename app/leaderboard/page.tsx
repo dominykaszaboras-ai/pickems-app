@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { getActiveTournament, getAllPickems } from "@/lib/queries";
 import { scorePickem } from "@/lib/scoring";
 import { loadFriendGraph } from "@/lib/friends";
+import { MedalBadge } from "@/components/MedalBadge";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -83,6 +84,7 @@ export default async function LeaderboardPage({
             <th className="px-3 py-2 text-right">S3</th>
             <th className="px-3 py-2 text-right">PO</th>
             <th className="px-3 py-2 text-right">Total</th>
+            <th className="px-3 py-2 text-right">Medal</th>
           </tr>
         </thead>
         <tbody className="bg-panel">
@@ -114,11 +116,14 @@ export default async function LeaderboardPage({
               <td className="px-3 py-2 text-right font-mono font-semibold text-accent">
                 {r.score.total}
               </td>
+              <td className="px-3 py-2 text-right">
+                <MedalBadge correct={r.score.total} size="sm" />
+              </td>
             </tr>
           ))}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={7} className="px-3 py-6 text-center text-muted">
+              <td colSpan={8} className="px-3 py-6 text-center text-muted">
                 {friendsOnly
                   ? "None of your friends have submitted picks yet."
                   : "No pickems submitted yet."}

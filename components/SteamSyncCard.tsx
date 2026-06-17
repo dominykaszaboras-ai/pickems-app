@@ -7,6 +7,7 @@
 // to re-paste to re-sync.
 
 import { useState } from "react";
+import { formatAgo } from "@/lib/formatTime";
 
 const STEAM_HELP_URL =
   "https://help.steampowered.com/en/wizard/HelpWithGameIssue/?appid=730&issueid=128";
@@ -30,8 +31,10 @@ const STAGE_LABELS: Record<string, string> = {
 
 export function SteamSyncCard({
   hasCodeOnFile,
+  lastSyncedAt = null,
 }: {
   hasCodeOnFile: boolean;
+  lastSyncedAt?: string | null;
 }) {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -74,9 +77,16 @@ export function SteamSyncCard({
       </p>
 
       {hasCodeOnFile && (
-        <div className="mb-3 rounded-lg border border-line bg-panel2 px-3 py-2 text-xs text-muted">
-          ✓ Auth code on file (<span className="font-mono">AAAA-•••••-AAAA</span>).
-          Re-paste below to refresh.
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-700/40 bg-emerald-900/15 px-3 py-2 text-xs">
+          <span className="text-emerald-200">
+            ✓ Synced — auth code on file
+            (<span className="font-mono">AAAA-•••••-AAAA</span>)
+          </span>
+          {lastSyncedAt && (
+            <span className="text-muted">
+              Last refresh: {formatAgo(lastSyncedAt)}
+            </span>
+          )}
         </div>
       )}
 

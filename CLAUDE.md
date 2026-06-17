@@ -84,9 +84,12 @@ components/
   FriendButton.tsx               Add/accept/decline/unfriend button on /users/[id]
   SteamLinkPanel.tsx             Link/Unlink Steam panel shown on the viewer's own profile
   SteamSyncCard.tsx              Paste Major Auth Code on /pickems (only when user has steamId)
+  SteamCodePanel.tsx             Profile-page version of the auth-code form (paste/refresh/clear from /users/[id])
+  MedalBadge.tsx                 Bronze/silver/gold/diamond medal coin next to score on profile + leaderboard
 
 lib/
   db.ts                          Prisma singleton
+  medals.ts                      Medal tiers + getMedal() (1-5 bronze, 6-15 silver, 16-25 gold, 26+ diamond)
   types.ts                       Shared types + STAGE_LABEL + SWISS_STAGE_KINDS
   auth.ts                        NextAuth config (credentials + steam provider, login rate-limit)
   steam.ts                       OpenID redirect/verify + return_to host check + signed-fields check
@@ -117,6 +120,7 @@ scripts/
   probe-liquipedia.ts            Diagnostic: dry-run Liquipedia parser (parse/raw/snippet modes)
   probe-steam-pickem.ts          Diagnostic: enumerate Valve pickem event IDs via GetTournamentLayout/v1 (no DB; needs STEAM_API_KEY)
   probe-steam-upload.ts          Diagnostic: re-upload a user's existing stored predictions to UploadTournamentPredictions/v1 (no-op, useful for confirming body format)
+  steam-pickem-sync.ts           Cron: bidirectional pull+push for every user with a Major Auth Code (every 6h via GH Actions)
   inspect-teams.ts               Diagnostic: teams per stage
   inspect-pickems.ts             Diagnostic: dump saved picks with team names
   migrate-stage-kinds.ts         One-off: rename CHALLENGERS→STAGE_1 etc (run; idempotent)
@@ -127,6 +131,7 @@ scripts/
   sync.yml                       HLTV sync — every 10 minutes
   live-sync.yml                  HLTV live sync — every 2 minutes
   sync-schedule.yml              Liquipedia schedule + broadcasts — daily @ 05:30 UTC
+  steam-pickem-sync.yml          Steam pickem bidirectional sync — every 6h
 ```
 
 ## Data model (key bits)
@@ -404,6 +409,10 @@ railway variables --kv | grep KEY
 - [x] **Pickem auto-import via Steam Web API** (2026-06-16). User pastes their per-Major "Major Auth Code" (`steamidkey`) from help.steampowered.com on `/pickems` (only visible when they have a linked SteamID). `/api/pickems/sync-steam` calls `ICSGOTournaments_730/GetTournamentLayout/v1` + `GetTournamentPredictions/v1`, stores raw JSON on `User.steamPickemRaw` (+ code on `steamPickemCode`), returns prediction count. **Mapping Valve's predictions -> our PickemPick rows is the active Phase 2 work** — layout schema is known (below), but we need one real `GetTournamentPredictions` response (i.e. someone pastes their auth code) to confirm the index→kind ordering before committing to it. `STEAM_API_KEY` and `STEAM_PICKEM_EVENT_ID=26` set on Railway (2026-06-16).
 - [x] **Playoff picker rebuilt as bracket UI** (2026-06-16). Replaced the old PlayoffsPicker (4 dropdowns) with `PlayoffBracketPicker` — CS2-style click-to-advance bracket. 4 QF matchups stack on the left, click a team to advance them; SF candidates derive from your QF picks (SF1 = winner(QF1) vs winner(QF2)); Final candidates derive from SFs; Champion auto-fills with the Final winner. Changing an upstream pick cleanly invalidates stale downstream picks via the `rebuild()` helper in the picker. The form now stores playoff picks as `Array<{round, teamId}>` so we can hold the full Cologne 2026 format (4+2+1+1 = 8 picks) — the old `Record<number, string|null>` could only hold 1 per round.
 - [x] **Phase 2 — Valve -> PickemPick read mapper** (2026-06-16). `lib/steamPickems.ts` ships `parseSteamLayout()` (turns `GetTournamentLayout` JSON into `{byPickid, bySlot}`) and `steamPicksToLocal()` (predictions array + team name map -> our PickemPick rows). Confirmed against a real Cologne 2026 response: index ordering is `[0,1]=3-0`, `[2..7]=advance`, `[8,9]=0-3` (NOT the `[2,3]=0-3` I'd assumed). Section names matched by substring ("Stage I", "Quarterfinals", "Grand Final"). Grand Final pick is duplicated into round=3 (Final) AND round=4 (Champion). `/api/pickems/sync-steam` now writes mapped picks straight to PickemPick rows, replacing ONLY the stages Steam returned (preserves locally-entered picks for stages Steam doesn't have yet, e.g. playoffs not open).
+- [x] **Periodic Steam pickem sync** (2026-06-17). `scripts/steam-pickem-sync.ts` + `.github/workflows/steam-pickem-sync.yml` run every 6h. For each user with `steamPickemCode` set, the cron (a) pulls fresh predictions from Valve (handles "user placed picks in CS2 directly"), then (b) re-uploads the user's local PickemPick rows to Valve (handles "webapp picks saved while Valve's prediction window was closed"). 3s delay between users to stay well under the 100k/day key quota. Both `STEAM_API_KEY` and `STEAM_PICKEM_EVENT_ID` are mirrored to GH secrets so the workflow can run.
+- [x] **Sync indicator + last-sync timestamp** (2026-06-17). When a user has a `steamPickemCode` on file, `SteamSyncCard` and the new `SteamCodePanel` (on profile) show "✓ Synced — auth code on file" with the masked code and a `formatAgo()` of the last refresh derived from the `at` field in `steamPickemRaw`.
+- [x] **Medal tier system** (2026-06-17). `lib/medals.ts` defines four tiers based on correct-pick count (1-5 bronze, 6-15 silver, 16-25 gold, 26+ diamond). `MedalBadge` component renders the appropriate emoji + tooltip. Wired into the profile score card and the leaderboard table (new "Medal" column).
+- [x] **Auth code panel on profile** (2026-06-17). `SteamCodePanel` rendered on `/users/[id]` when the viewer is signed in as the profile owner AND has Steam linked. Lets them paste / refresh the Major Auth Code without going to `/pickems`. Posts to the same `/api/pickems/sync-steam` route.
 - [x] **Phase 3 — write-back to Steam on pickem save** (2026-06-16). `/api/pickems` POST now does a best-effort `UploadTournamentPredictions/v1` push after the local save. Eligible when the user has Steam linked AND a `steamPickemCode` on file AND `syncToSteam` isn't disabled (default on, persisted in localStorage). Save never fails on Steam errors — we return a `steamPush` object (`{attempted, ok, uploaded, reason}`) so the form can show "Synced N picks to Steam" or "Saved locally; Steam hasn't opened those picks for upload yet". Body format Valve actually accepts is repeated top-level form fields: `sectionid`, `groupid`, `index`, `pickid`, `itemid` (itemid = pickid empirically). Verified by re-uploading a user's existing Swiss picks and getting 410 "Gone" (stages closed) instead of 400 (= format accepted). Playoff uploads to event 26 currently return 400 until Valve opens the playoff prediction window post-Stage 3.
 - [ ] (Optional) Run `scripts/backfill-stage-names.ts` against prod
   to rewrite the stale "Challengers Stage" / "Legends Stage" /

@@ -31,10 +31,22 @@ export default async function PickemsPage() {
     getUserPickem(userId, tournament.id),
     prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, steamId: true, steamPickemCode: true },
+      select: { id: true, steamId: true, steamPickemCode: true, steamPickemRaw: true },
     }),
   ]);
   const hasSteam = Boolean(viewer?.steamId);
+  // Pull the last-sync timestamp out of the stored raw payload so we can
+  // surface it on the SteamSyncCard. We avoid adding a dedicated column
+  // for this — the `at` field is already written on every sync.
+  const lastSyncedAt = (() => {
+    if (!viewer?.steamPickemRaw) return null;
+    try {
+      const obj = JSON.parse(viewer.steamPickemRaw);
+      return typeof obj?.at === "string" ? obj.at : null;
+    } catch {
+      return null;
+    }
+  })();
 
   return (
     <main className="mx-auto max-w-5xl p-6">
@@ -44,7 +56,10 @@ export default async function PickemsPage() {
       </header>
       {hasSteam ? (
         <div className="mb-6">
-          <SteamSyncCard hasCodeOnFile={Boolean(viewer?.steamPickemCode)} />
+          <SteamSyncCard
+            hasCodeOnFile={Boolean(viewer?.steamPickemCode)}
+            lastSyncedAt={lastSyncedAt}
+          />
         </div>
       ) : (
         viewer && (

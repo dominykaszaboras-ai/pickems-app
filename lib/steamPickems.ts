@@ -148,6 +148,9 @@ export async function uploadTournamentPredictions(
     groupid: number;
     index: number;
     pick: number;
+    // The user's specific 20-digit inventory item id for the team sticker
+    // being placed in this slot. Kept as a string to preserve precision.
+    itemid: string;
   }>,
 ): Promise<{ ok: boolean; status: number; body: unknown }> {
   if (picks.length === 0) {
@@ -173,11 +176,11 @@ export async function uploadTournamentPredictions(
     form.append("groupid", String(p.groupid));
     form.append("index", String(p.index));
     form.append("pickid", String(p.pick));
-    // Valve also wants itemid — empirically this is the same number as
-    // pickid (the team id), because in CS2 each Major team has exactly one
-    // tournament-sticker item slot, and Valve resolves the inventory item
-    // from the team id automatically when the user has the auth-code grant.
-    form.append("itemid", String(p.pick));
+    // itemid is the user's PERSONAL inventory item id for this team's
+    // sticker — looked up via GetTournamentItems and threaded through
+    // localPicksToSteam. Sending the wrong itemid causes 412 Precondition
+    // Failed even when everything else is right.
+    form.append("itemid", p.itemid);
   }
 
   let r: Response;
@@ -206,6 +209,64 @@ export async function uploadTournamentPredictions(
     );
   }
   return { ok: r.ok, status: r.status, body: parsed };
+}
+
+// GetTournamentItems/v1 — returns the user's owned Major sticker inventory
+// items. Crucial for upload: Valve's `itemid` field is NOT the team's pickid;
+// it's the user's UNIQUE 64-bit inventory item id for their copy of that
+// team's sticker. Without the correct itemid, uploads return 412 Precondition
+// Failed even when the picks themselves are valid.
+//
+// itemids are 20-digit numbers that overflow JavaScript's Number precision,
+// so we extract them from the response body via regex and keep them as
+// strings end-to-end (URLSearchParams accepts strings).
+export async function getTournamentItems(
+  event: number,
+  steamId: string,
+  steamidkey: string,
+): Promise<Map<number, string>> {
+  const budgetOk = consumeOutboundBudget();
+  if (!budgetOk.ok) {
+    throw new Error("Steam upstream is throttled — try again shortly.");
+  }
+
+  const u = new URL(`${BASE}/GetTournamentItems/v1/`);
+  u.searchParams.set("key", key());
+  u.searchParams.set("event", String(event));
+  u.searchParams.set("steamid", steamId);
+  u.searchParams.set("steamidkey", steamidkey);
+
+  let r: Response;
+  try {
+    r = await fetch(u.toString(), { headers: { "user-agent": "pickems-app" } });
+  } catch {
+    throw new Error("Couldn't reach Steam (network).");
+  }
+  if (r.status === 401 || r.status === 403) {
+    throw new Error(
+      "Steam rejected your auth code while fetching team items.",
+    );
+  }
+  if (!r.ok) {
+    const body = await safeBody(r);
+    console.error(`[steamPickems] items ${r.status}: ${body}`);
+    throw new Error("Steam upstream error fetching your team items.");
+  }
+
+  // Don't JSON.parse — we'd lose precision on the 20-digit itemids. Walk
+  // the raw text with a regex that captures both `teamid` and `itemid`
+  // exactly as Valve emitted them.
+  const text = await r.text();
+  const out = new Map<number, string>();
+  const re =
+    /"type"\s*:\s*"team"[\s\S]*?"teamid"\s*:\s*(\d+)[\s\S]*?"itemid"\s*:\s*(\d+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const teamid = Number(m[1]);
+    const itemid = m[2];
+    if (Number.isFinite(teamid) && itemid) out.set(teamid, itemid);
+  }
+  return out;
 }
 
 export async function getTournamentPredictions(
@@ -503,7 +564,16 @@ export function localPicksToSteam(
   }>,
   teamNameById: Map<string, string>, // our team id -> name
   normalize: (name: string) => string,
-): Array<{ sectionid: number; groupid: number; index: number; pick: number }> {
+  // Per-user inventory: teamid (Steam pickid) -> sticker itemid string.
+  // Required for Valve to accept the upload. Build from getTournamentItems().
+  itemidByTeamid: Map<number, string>,
+): Array<{
+  sectionid: number;
+  groupid: number;
+  index: number;
+  pick: number;
+  itemid: string;
+}> {
   // Invert byPickid (Steam pickid -> name) to (normalized name -> Steam pickid).
   const steamPickidByNormalizedName = new Map<string, number>();
   for (const [pickid, name] of parsed.byPickid) {
@@ -538,6 +608,7 @@ export function localPicksToSteam(
     groupid: number;
     index: number;
     pick: number;
+    itemid: string;
   }> = [];
 
   for (const local of localPicks) {
@@ -563,11 +634,18 @@ export function localPicksToSteam(
     }
     const slot = slots.splice(slotIdx, 1)[0];
 
+    // Skip picks where the user doesn't own the team sticker. We can't
+    // upload them — Valve would reject with 412. Better to silently drop
+    // than to fail the whole batch.
+    const itemid = itemidByTeamid.get(steamPickid);
+    if (!itemid) continue;
+
     out.push({
       sectionid: slot.sectionid,
       groupid: slot.groupid,
       index: slot.index,
       pick: steamPickid,
+      itemid,
     });
   }
 

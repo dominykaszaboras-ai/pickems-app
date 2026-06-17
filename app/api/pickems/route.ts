@@ -6,6 +6,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { isSameOrigin } from "@/lib/rateLimit";
 import {
+  getTournamentItems,
   getTournamentLayout,
   localPicksToSteam,
   parseSteamLayout,
@@ -173,6 +174,14 @@ async function maybePushToSteam(
     });
     const teamNameById = new Map(teams.map((t) => [t.id, t.name]));
 
+    // Fetch the user's per-team sticker itemids — Valve rejects uploads
+    // with the wrong itemid (412 Precondition Failed).
+    const itemidByTeamid = await getTournamentItems(
+      eventId,
+      user.steamId,
+      user.steamPickemCode,
+    );
+
     const steamPicks = localPicksToSteam(
       parsed,
       picks.map((p) => ({
@@ -183,6 +192,7 @@ async function maybePushToSteam(
       })),
       teamNameById,
       normalizeTeamName,
+      itemidByTeamid,
     );
 
     if (steamPicks.length === 0) {
@@ -201,15 +211,24 @@ async function maybePushToSteam(
       steamPicks,
     );
     if (!res.ok) {
-      // 410 = stages concluded (expected for Swiss after the bracket starts).
-      // 400 = Valve hasn't opened the section yet (typical for playoffs
-      // before they go live). Both are non-fatal.
+      // Empirical error code map (Cologne 2026, verified 2026-06-17):
+      //   410 Gone               = stage is concluded; can't update.
+      //   412 Precondition Failed = slots already filled (e.g. user
+      //                              locked picks via CS2 / counter-
+      //                              strike.net); Valve refuses third-
+      //                              party overwrite even though the
+      //                              section is open for picking.
+      //   400 Bad Request        = ambiguous; either the section isn't
+      //                              open yet OR we're sending a field
+      //                              Valve doesn't recognise.
       const reason =
         res.status === 410
           ? "stage_closed"
-          : res.status === 400
-            ? "stage_not_open"
-            : `valve_${res.status}`;
+          : res.status === 412
+            ? "already_picked_in_cs2"
+            : res.status === 400
+              ? "stage_not_open"
+              : `valve_${res.status}`;
       return { attempted: true, ok: false, uploaded: 0, reason };
     }
     return { attempted: true, ok: true, uploaded: steamPicks.length };

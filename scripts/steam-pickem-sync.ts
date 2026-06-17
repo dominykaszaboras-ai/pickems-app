@@ -20,6 +20,7 @@
 import { prisma } from "../lib/db";
 import {
   extractPredictions,
+  getTournamentItems,
   getTournamentLayout,
   getTournamentPredictions,
   localPicksToSteam,
@@ -162,6 +163,18 @@ async function syncOne(
         select: { id: true, name: true },
       });
       const teamNameById = new Map(teams.map((t) => [t.id, t.name]));
+      // Pull the user's per-team sticker itemids before building the
+      // upload payload — without them Valve returns 412 on every pick.
+      let itemidByTeamid: Map<number, string> = new Map();
+      try {
+        itemidByTeamid = await getTournamentItems(
+          eventId,
+          user.steamId,
+          user.steamPickemCode,
+        );
+      } catch (e) {
+        res.errors.push(`items: ${(e as Error).message}`);
+      }
       const upload = localPicksToSteam(
         parsed,
         pickem.picks.map((p) => ({
@@ -176,6 +189,7 @@ async function syncOne(
         })),
         teamNameById,
         normalizeTeamName,
+        itemidByTeamid,
       );
       if (upload.length > 0) {
         try {

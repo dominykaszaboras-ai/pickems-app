@@ -20,6 +20,7 @@
 import { prisma } from "../lib/db";
 import {
   extractPredictions,
+  getTournamentItems,
   parseSteamLayout,
   uploadTournamentPredictions,
 } from "../lib/steamPickems";
@@ -59,15 +60,26 @@ async function main() {
   for (const v of layout.bySlot.values()) {
     sectionByGroup.set(v.groupid, v.sectionid);
   }
+  // Per-user itemid lookup — Valve rejects uploads with the wrong itemid.
+  console.log("Fetching user's tournament items...");
+  const itemidByTeamid = await getTournamentItems(
+    eventId,
+    u.steamId,
+    u.steamPickemCode,
+  );
+  console.log(`Got ${itemidByTeamid.size} owned team sticker(s).`);
+
   const payload = predictions
     .map((p) => {
       const sectionid = sectionByGroup.get(p.groupid);
-      if (sectionid == null) return null;
+      const itemid = itemidByTeamid.get(p.pickid);
+      if (sectionid == null || !itemid) return null;
       return {
         sectionid,
         groupid: p.groupid,
         index: p.index,
         pick: p.pickid,
+        itemid,
       };
     })
     .filter((x): x is NonNullable<typeof x> => x !== null);

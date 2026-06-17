@@ -149,6 +149,8 @@ export function PickemsForm({
           setSteamMsg("Steam hasn't opened those picks for upload yet — saved locally");
         } else if (push.reason === "stage_closed") {
           setSteamMsg("Steam considers those stages closed — saved locally");
+        } else if (push.reason === "already_picked_in_cs2") {
+          setSteamMsg("You already locked these picks in CS2 — Steam won't let us overwrite. Saved locally.");
         } else {
           setSteamMsg(`Saved locally; Steam upload failed (${push.reason ?? "unknown"})`);
         }

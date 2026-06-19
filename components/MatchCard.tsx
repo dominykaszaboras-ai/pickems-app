@@ -127,9 +127,10 @@ function StreamButtons({
           rel="noopener noreferrer"
           onClick={(e) => e.stopPropagation()}
           title="Watch on Twitch"
-          className="rounded px-1 text-[10px] font-semibold text-muted hover:bg-purple-500/15 hover:text-purple-300"
+          aria-label="Watch on Twitch"
+          className="flex items-center justify-center rounded px-1 py-0.5 text-muted hover:bg-purple-500/15 hover:text-[#a970ff]"
         >
-          TW
+          <TwitchIcon />
         </a>
       )}
       {youtubeUrl && (
@@ -139,11 +140,42 @@ function StreamButtons({
           rel="noopener noreferrer"
           onClick={(e) => e.stopPropagation()}
           title="Watch on YouTube"
-          className="rounded px-1 text-[10px] font-semibold text-muted hover:bg-red-500/15 hover:text-red-400"
+          aria-label="Watch on YouTube"
+          className="flex items-center justify-center rounded px-1 py-0.5 text-muted hover:bg-red-500/15 hover:text-[#ff0033]"
         >
-          YT
+          <YouTubeIcon />
         </a>
       )}
     </span>
+  );
+}
+
+// Inline SVGs so we don't pull in an icon library. Both use currentColor so
+// they inherit the hover tint set on the parent <a>.
+function TwitchIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width={12}
+      height={12}
+      fill="currentColor"
+    >
+      <path d="M4 2 2 6v14h5v3h3l3-3h4l6-6V2H4Zm17 11-4 4h-4l-3 3v-3H6V4h15v9ZM10 7v6h2V7h-2Zm6 0v6h2V7h-2Z" />
+    </svg>
+  );
+}
+
+function YouTubeIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width={14}
+      height={14}
+      fill="currentColor"
+    >
+      <path d="M23 6.2a3 3 0 0 0-2.1-2.1C19 3.6 12 3.6 12 3.6s-7 0-8.9.5A3 3 0 0 0 1 6.2C.6 8.1.6 12 .6 12s0 3.9.5 5.8a3 3 0 0 0 2.1 2.1c1.9.5 8.9.5 8.9.5s7 0 8.9-.5A3 3 0 0 0 23 17.8c.5-1.9.5-5.8.5-5.8s0-3.9-.5-5.8ZM9.7 15.6V8.4l6.2 3.6-6.2 3.6Z" />
+    </svg>
   );
 }

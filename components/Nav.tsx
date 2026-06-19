@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useSession, signOut } from "next-auth/react";
 import clsx from "clsx";
 import { RefreshButton } from "./RefreshButton";
+import { ThemeToggle } from "./ThemeToggle";
 
 export function Nav() {
   const { data: session, status } = useSession();
@@ -79,6 +80,7 @@ export function Nav() {
         {session?.user ? (
           <div className="flex items-center gap-3 text-sm">
             <RefreshButton />
+            <ThemeToggle />
             <div ref={menuRef} className="relative">
               <button
                 type="button"
@@ -174,6 +176,7 @@ export function Nav() {
           </div>
         ) : (
           <div className="flex items-center gap-3 text-sm">
+            <ThemeToggle />
             <Link href="/auth/signin" className="text-muted hover:text-text">Sign in</Link>
             <Link href="/auth/signup" className="rounded bg-accent px-3 py-1 font-semibold text-ink">Sign up</Link>
           </div>

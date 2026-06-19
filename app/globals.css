@@ -2,13 +2,38 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Color tokens — dark is the default; an explicit `html.light` class swaps
+ * them. Values are stored as space-separated RGB components so Tailwind's
+ * `<alpha-value>` syntax can mix in opacity. */
 :root {
+  --c-ink: 11 13 18;
+  --c-panel: 17 20 27;
+  --c-panel2: 22 26 35;
+  --c-line: 31 36 48;
+  --c-text: 230 232 238;
+  --c-muted: 138 147 166;
+  --c-accent: 245 166 35;
+  --c-win: 43 213 118;
+  --c-loss: 239 79 107;
   color-scheme: dark;
 }
 
+html.light {
+  --c-ink: 246 247 250;       /* page background */
+  --c-panel: 255 255 255;     /* card background */
+  --c-panel2: 240 243 248;    /* secondary panel */
+  --c-line: 222 227 235;      /* borders */
+  --c-text: 17 24 39;         /* primary text (slate-900) */
+  --c-muted: 90 102 122;      /* secondary text */
+  --c-accent: 217 119 6;      /* amber-600 — slightly darker for AA contrast */
+  --c-win: 21 145 70;
+  --c-loss: 209 36 60;
+  color-scheme: light;
+}
+
 html, body {
-  background: theme(colors.ink);
-  color: theme(colors.text);
+  background: rgb(var(--c-ink));
+  color: rgb(var(--c-text));
 }
 
 * { box-sizing: border-box; }

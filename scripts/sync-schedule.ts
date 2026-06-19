@@ -173,21 +173,9 @@ async function main() {
     },
     include: { teamA: true, teamB: true, stage: true },
   });
-  // Only GC FUTURE ghosts. Past PENDING ghosts represent matches awaiting
-  // HLTV adoption (Liquipedia drops finished matches from its upcoming
-  // block, and our `cutoff` filter excludes them above) — deleting them
-  // here would be data loss for any QF/SF/Final the HLTV sync hasn't yet
-  // attached an hltvId to. 15-min grace so a sync that races the start
-  // whistle doesn't murder an in-flight playoff QF.
-  const ghostFutureCutoff = Date.now() - 15 * 60 * 1000;
   let removed = 0;
-  let skippedPastGhosts = 0;
   for (const g of ghosts) {
     if (!g.startTime || !g.teamA || !g.teamB) continue;
-    if (g.startTime.getTime() < ghostFutureCutoff) {
-      skippedPastGhosts++;
-      continue;
-    }
     const fwd = `${g.stageId}|${g.startTime.getTime()}|${normalizeTeamName(g.teamA.name)}|${normalizeTeamName(g.teamB.name)}`;
     const rev = `${g.stageId}|${g.startTime.getTime()}|${normalizeTeamName(g.teamB.name)}|${normalizeTeamName(g.teamA.name)}`;
     if (liveKeys.has(fwd) || liveKeys.has(rev)) continue;
@@ -196,7 +184,7 @@ async function main() {
   }
 
   console.log(
-    `[schedule] upserted=${upserted} skippedPast=${skippedPast} skippedNoStage=${skippedNoStage} skippedNoTeam=${skippedNoTeam} ghostsRemoved=${removed} skippedPastGhosts=${skippedPastGhosts}`,
+    `[schedule] upserted=${upserted} skippedPast=${skippedPast} skippedNoStage=${skippedNoStage} skippedNoTeam=${skippedNoTeam} ghostsRemoved=${removed}`,
   );
 
   await prisma.$disconnect();

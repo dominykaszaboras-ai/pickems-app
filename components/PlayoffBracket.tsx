@@ -3,7 +3,6 @@ import { useMemo, useState } from "react";
 import { STAGE_LABEL, type ClientMatch, type ClientPickem, type ClientStage, type ClientTeam, type ClientTournament } from "@/lib/types";
 import { effectiveWinner, type ScoreLine, type WinnerOverrides } from "@/lib/scoring";
 import { MatchCard } from "./MatchCard";
-import { PickSummary } from "./PickSummary";
 
 // Mini playoff bracket rendered with a fixed CSS-grid layout so QF/SF/Final
 // columns align like a real single-elimination bracket (Liquipedia style):
@@ -17,10 +16,13 @@ import { PickSummary } from "./PickSummary";
 //   QF4 ┘
 //
 // Each row in the CSS grid is one "QF slot" tall. QFs occupy 1 row, SFs
-// occupy 2 rows centered over their two feeders, the Final occupies 4 rows
-// centered over the two SFs. SVG connector lines are drawn over the grid
-// based on the same row math so the layout stays consistent regardless of
-// card height changes.
+// span 2 rows centered over their two feeders, the Final spans all 4 rows.
+//
+// Progression rule: a team only appears in an SF/Final slot once its
+// feeder match is FINISHED (or simulated via overrides). A QF that's still
+// LIVE / PENDING does NOT advance its leading team — we wait for the full
+// Bo3 to conclude. This is intentional: it mirrors how IRL brackets
+// display TBD until each round resolves.
 
 const ROUND_LABELS: Record<number, string> = {
   1: "Quarter-finals",
@@ -28,10 +30,9 @@ const ROUND_LABELS: Record<number, string> = {
   3: "Grand Final",
 };
 
-// Visual constants — used by both the grid layout and the SVG connectors.
 const QF_COUNT = 4;
-const ROW_GUTTER = 16; // vertical gap between QF rows, in pixels
-const COLUMN_GAP = 32; // horizontal gap between QF/SF/Final columns
+const ROW_GUTTER = 16;
+const COLUMN_GAP = 32;
 const COLUMN_WIDTHS = { qf: 220, sf: 220, final: 240 } as const;
 
 export function PlayoffBracket({
@@ -39,18 +40,20 @@ export function PlayoffBracket({
   overrides,
   setOverride,
   pickem,
-  score,
   tournament,
 }: {
   stage: ClientStage;
   overrides: WinnerOverrides;
   setOverride: (matchId: string, teamId: string | null) => void;
   pickem: ClientPickem | null;
+  // Kept for API compatibility — currently unused, PickSummary is no longer
+  // rendered inside this bracket (the per-stage pick chip list was noisy and
+  // duplicated info shown elsewhere).
   score: ScoreLine | null;
   tournament?: ClientTournament;
 }) {
-  // Bucket and order matches by round + slot so the bracket draws in a stable
-  // visual order regardless of DB insertion order.
+  // Bucket and order matches by round + slot. We rely on bracketSlot for
+  // stable visual ordering — DB insertion order is meaningless here.
   const { qfs, sfs, finalMatch } = useMemo(() => {
     const byRound: Record<number, ClientMatch[]> = {};
     for (const m of stage.matches) {
@@ -67,6 +70,41 @@ export function PlayoffBracket({
     return { qfs: qfsRaw, sfs: sfsRaw, finalMatch: finalRaw };
   }, [stage]);
 
+  // For each QF, resolve the team that should advance to its SF slot —
+  // either the real FINISHED winner, or a user-simulated override.
+  // Returns null if the match is still LIVE/PENDING with no override.
+  function advancingTeamId(m: ClientMatch | null): string | null {
+    if (!m) return null;
+    if (overrides[m.id] !== undefined) return overrides[m.id];
+    if (m.status !== "FINISHED") return null;
+    return m.winnerId;
+  }
+
+  const teamsById = useMemo(() => {
+    const m = new Map<string, ClientTeam>();
+    for (const t of stage.teams) m.set(t.id, t);
+    return m;
+  }, [stage.teams]);
+
+  // Compute derived SF/Final pairings from feeder winners. We construct a
+  // "shadow" match object that mirrors the stored SF row but with teamA/teamB
+  // taken from the feeders. Identity (match.id) stays the same so MatchCard
+  // simulation overrides still key correctly.
+  function shadowedSF(sf: ClientMatch | null, feederA: ClientMatch | null, feederB: ClientMatch | null): ClientMatch | null {
+    if (!sf) return null;
+    const aId = advancingTeamId(feederA);
+    const bId = advancingTeamId(feederB);
+    return {
+      ...sf,
+      teamA: aId ? teamsById.get(aId) ?? null : null,
+      teamB: bId ? teamsById.get(bId) ?? null : null,
+    };
+  }
+
+  const sf1 = shadowedSF(sfs[0], qfs[0], qfs[1]);
+  const sf2 = shadowedSF(sfs[1], qfs[2], qfs[3]);
+  const finalShadow = shadowedSF(finalMatch, sf1, sf2);
+
   const hintByRound: Record<number, Record<string, string | undefined>> = useMemo(() => {
     const out: Record<number, Record<string, string | undefined>> = {};
     if (!pickem) return out;
@@ -77,12 +115,6 @@ export function PlayoffBracket({
     }
     return out;
   }, [pickem]);
-
-  const teamsById = useMemo(() => {
-    const m = new Map<string, ClientTeam>();
-    for (const t of stage.teams) m.set(t.id, t);
-    return m;
-  }, [stage.teams]);
 
   const [collapsed, setCollapsed] = useState(false);
 
@@ -98,13 +130,9 @@ export function PlayoffBracket({
           {collapsed ? "Show bracket" : "Hide bracket"}
         </button>
       </div>
-      <div className="mb-4">
-        <PickSummary stage={stage} score={score} teamsById={teamsById} />
-      </div>
       {!collapsed && (
         <div className="overflow-x-auto pb-2">
           <div className="min-w-[760px]">
-            {/* Column headers */}
             <div
               className="mb-2 grid text-[11px] font-semibold uppercase tracking-wide text-muted"
               style={{
@@ -117,8 +145,6 @@ export function PlayoffBracket({
               <div>{ROUND_LABELS[3]}</div>
             </div>
 
-            {/* Bracket grid: 4 rows tall (one per QF), 3 columns wide.        */}
-            {/* QFs span 1 row each; SFs span 2 rows; Final spans all 4 rows. */}
             <div
               className="grid"
               style={{
@@ -128,7 +154,6 @@ export function PlayoffBracket({
                 rowGap: `${ROW_GUTTER}px`,
               }}
             >
-              {/* QF column — one card per row, slots 1..4 */}
               {qfs.map((m, i) => (
                 <div
                   key={`qf-${i}`}
@@ -145,8 +170,7 @@ export function PlayoffBracket({
                 </div>
               ))}
 
-              {/* SF column — each card centered across 2 QF rows */}
-              {sfs.map((m, i) => (
+              {[sf1, sf2].map((m, i) => (
                 <div
                   key={`sf-${i}`}
                   style={{ gridColumn: 2, gridRow: `${i * 2 + 1} / span 2` }}
@@ -162,13 +186,12 @@ export function PlayoffBracket({
                 </div>
               ))}
 
-              {/* Final column — single card centered across all 4 QF rows */}
               <div
                 style={{ gridColumn: 3, gridRow: `1 / span ${QF_COUNT}` }}
                 className="flex items-center"
               >
                 <BracketSlot
-                  match={finalMatch}
+                  match={finalShadow}
                   overrides={overrides}
                   setOverride={setOverride}
                   pickHints={hintByRound[3]}
@@ -184,7 +207,6 @@ export function PlayoffBracket({
   );
 }
 
-// One bracket slot — a real match card if we have data, else a "TBD" placeholder.
 function BracketSlot({
   match,
   overrides,
@@ -198,8 +220,6 @@ function BracketSlot({
   setOverride: (matchId: string, teamId: string | null) => void;
   pickHints?: { [teamId: string]: string | undefined };
   tournament?: ClientTournament;
-  // For the Final cell only: if the user has a CHAMP pick, surface it here
-  // even if no PLAYOFF_WINNER round=3 hint exists.
   championHint?: { [teamId: string]: string | undefined };
 }) {
   if (!match) {

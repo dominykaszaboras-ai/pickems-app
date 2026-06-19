@@ -170,11 +170,24 @@ export async function syncTournament(
 
   // 4a. Match list: prefer per-stage event IDs (Cologne-style), and fall back
   // to whatever we got under the umbrella event for completeness.
+  //
+  // When a stage event id is shared (either equal to the umbrella id, or used
+  // by more than one stage in the map), opt into per-match disambiguation so
+  // playoff QFs labelled "Quarter-final" don't get force-stamped with the
+  // sibling stage kind (e.g. STAGE_3 in Cologne 2026, where event 8301 hosts
+  // BOTH Stage 3 swiss matches AND the playoff bracket).
+  const eventIdCounts = new Map<number, number>();
+  for (const id of Object.values(stageEvents)) {
+    if (!id) continue;
+    eventIdCounts.set(id, (eventIdCounts.get(id) ?? 0) + 1);
+  }
   const stageMatches = [] as Awaited<ReturnType<typeof fetchStageMatches>>;
   for (const [kind, evId] of Object.entries(stageEvents) as Array<[StageKind, number]>) {
     if (!evId) continue;
+    const disambiguatePlayoffs =
+      evId === hltvEventId || (eventIdCounts.get(evId) ?? 0) > 1;
     try {
-      const ms = await fetchStageMatches(evId, kind);
+      const ms = await fetchStageMatches(evId, kind, { disambiguatePlayoffs });
       stageMatches.push(...ms);
     } catch (e) {
       console.warn(`[sync] stage ${kind} (event ${evId}) failed:`, (e as Error).message);
@@ -193,15 +206,23 @@ export async function syncTournament(
     const winnerId = m.winnerName ? teamIdByName.get(m.winnerName.toLowerCase()) ?? null : null;
 
     // Ghost adoption: if the daily Liquipedia schedule sync already wrote a
-    // PENDING row for these two teams + stage with no hltvId, claim it by
-    // stamping the now-known hltvId on it. That way the upsert below finds
-    // the same row instead of creating a duplicate.
+    // PENDING row for these two teams with no hltvId, claim it by stamping
+    // the now-known hltvId on it AND re-targeting its stageId to whatever
+    // we resolved this run. That way the upsert below finds the same row
+    // instead of creating a duplicate.
+    //
+    // We scope by (tournamentId, team pair) — NOT by stageId — because the
+    // ghost may have been written under a different stage kind than this
+    // sync resolved (e.g. Liquipedia wrote PLAYOFFS but a pre-disambiguation
+    // sync force-tagged the HLTV match as STAGE_3). Cross-stage adoption is
+    // safe: two teams rarely play each other across multiple stages of the
+    // same Major, and even then the hltvId upsert keeps things idempotent.
     if (teamAId && teamBId) {
       const ghost = await prisma.match.findFirst({
         where: {
           hltvId: null,
-          stageId: stageIdByKind[stageKind],
           status: "PENDING",
+          stage: { tournamentId: tournament.id },
           OR: [
             { teamAId, teamBId },
             { teamAId: teamBId, teamBId: teamAId },
@@ -212,7 +233,10 @@ export async function syncTournament(
       if (ghost) {
         await prisma.match.update({
           where: { id: ghost.id },
-          data: { hltvId: m.hltvId },
+          data: {
+            hltvId: m.hltvId,
+            stageId: stageIdByKind[stageKind],
+          },
         });
       }
     }

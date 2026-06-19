@@ -163,17 +163,32 @@ export async function fetchEventSnapshot(eventId: number): Promise<HltvEventSnap
   };
 }
 
+export interface FetchStageMatchesOptions {
+  // When true, a per-match HLTV label that infers to PLAYOFFS (or yields a
+  // non-null bracketRound from "Quarter-final" / "Semi-final" / "Grand Final")
+  // overrides the caller's stageKind. Swiss matches and unlabeled matches
+  // keep the caller's stageKind.
+  //
+  // Use this when the stage event id is shared with another stage — most
+  // notably Cologne 2026 where event 8301 is BOTH the umbrella AND the
+  // STAGE_3 event AND hosts playoff matches under the same id. Without
+  // this, playoff QFs get force-tagged STAGE_3 → mis-stored on the wrong
+  // stage → invisible to the playoff bracket and scoring.
+  disambiguatePlayoffs?: boolean;
+}
+
 // Fetch *just* the matches (upcoming + results) for a stage-specific event ID,
 // forcing every returned HltvMatch's stageKind to the kind you pass.
 //
 // Cologne 2026 splits each Major stage into its own HLTV event:
-//   8301 - umbrella       (teams, dates, name)
+//   8301 - umbrella       (teams, dates, name) — ALSO hosts Stage 3 + Playoffs
 //   9028 - Stage 1        (results)
 //   9029 - Stage 2        (live + results)
 //   ...
 export async function fetchStageMatches(
   stageEventId: number,
   stageKind: StageKind,
+  options: FetchStageMatchesOptions = {},
 ): Promise<HltvMatch[]> {
   const upcoming = await safe(() => HLTV.getMatches() as Promise<any[]>, [] as any[]);
   const upcomingForStage = (upcoming ?? [])
@@ -186,10 +201,23 @@ export async function fetchStageMatches(
   );
   const resultMatches: HltvMatch[] = (results ?? []).map(normalizeResult);
 
-  // Force the stage kind — HLTV's labels are unreliable enough that we trust
-  // the event-id-to-stage mapping the caller passed in.
+  // Force the stage kind. HLTV's labels are unreliable enough that we trust
+  // the event-id-to-stage mapping the caller passed in — EXCEPT when the
+  // caller flags this event as shared. In that case, trust the per-match
+  // playoff signal (PLAYOFFS inference OR a non-null bracketRound from
+  // "quarter/semi/grand final" labels) and let it override; everything else
+  // falls back to the caller's stageKind.
   const all = [...resultMatches, ...upcomingForStage];
-  for (const m of all) m.stageKind = stageKind;
+  for (const m of all) {
+    if (
+      options.disambiguatePlayoffs &&
+      (m.stageKind === "PLAYOFFS" || m.bracketRound != null)
+    ) {
+      m.stageKind = "PLAYOFFS";
+    } else {
+      m.stageKind = stageKind;
+    }
+  }
   return all;
 }
 

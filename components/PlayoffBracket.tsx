@@ -86,24 +86,57 @@ export function PlayoffBracket({
     return m;
   }, [stage.teams]);
 
+  // Index the viewer's playoff picks by round so we can use them as
+  // fallback "ghost" teams in SF/Final cells when the feeder match
+  // hasn't decided yet. This is purely visual — the actual scoring still
+  // gates on `advancingTeamId` (real winner OR sim override).
+  const playoffPicksByRound = useMemo(() => {
+    const map = new Map<number, Set<string>>();
+    for (const p of pickem?.picks ?? []) {
+      if (p.kind !== "PLAYOFF_WINNER" || p.round == null) continue;
+      if (!map.has(p.round)) map.set(p.round, new Set());
+      map.get(p.round)!.add(p.teamId);
+    }
+    return map;
+  }, [pickem]);
+
+  // The user's pick for a given feeder match: which of the two teams in
+  // `feeder` did they pick to win round `round`? Returns null if none.
+  function userPickForFeeder(feeder: ClientMatch | null, round: number): string | null {
+    if (!feeder) return null;
+    const picks = playoffPicksByRound.get(round);
+    if (!picks) return null;
+    if (feeder.teamA && picks.has(feeder.teamA.id)) return feeder.teamA.id;
+    if (feeder.teamB && picks.has(feeder.teamB.id)) return feeder.teamB.id;
+    return null;
+  }
+
   // Compute derived SF/Final pairings from feeder winners. We construct a
   // "shadow" match object that mirrors the stored SF row but with teamA/teamB
-  // taken from the feeders. Identity (match.id) stays the same so MatchCard
-  // simulation overrides still key correctly.
-  function shadowedSF(sf: ClientMatch | null, feederA: ClientMatch | null, feederB: ClientMatch | null): ClientMatch | null {
-    if (!sf) return null;
-    const aId = advancingTeamId(feederA);
-    const bId = advancingTeamId(feederB);
+  // taken from the feeders. When the feeder is still undecided we fall
+  // back to the user's pick so the bracket renders their predicted path —
+  // the pickHints layer below will tag it with WIN/CHAMP.
+  // Identity (match.id) stays the same so MatchCard simulation overrides
+  // still key correctly.
+  function shadowedRound(
+    self: ClientMatch | null,
+    feederA: ClientMatch | null,
+    feederB: ClientMatch | null,
+    feederRound: number,
+  ): ClientMatch | null {
+    if (!self) return null;
+    const aId = advancingTeamId(feederA) ?? userPickForFeeder(feederA, feederRound);
+    const bId = advancingTeamId(feederB) ?? userPickForFeeder(feederB, feederRound);
     return {
-      ...sf,
+      ...self,
       teamA: aId ? teamsById.get(aId) ?? null : null,
       teamB: bId ? teamsById.get(bId) ?? null : null,
     };
   }
 
-  const sf1 = shadowedSF(sfs[0], qfs[0], qfs[1]);
-  const sf2 = shadowedSF(sfs[1], qfs[2], qfs[3]);
-  const finalShadow = shadowedSF(finalMatch, sf1, sf2);
+  const sf1 = shadowedRound(sfs[0], qfs[0], qfs[1], 1);
+  const sf2 = shadowedRound(sfs[1], qfs[2], qfs[3], 1);
+  const finalShadow = shadowedRound(finalMatch, sf1, sf2, 2);
 
   const hintByRound: Record<number, Record<string, string | undefined>> = useMemo(() => {
     const out: Record<number, Record<string, string | undefined>> = {};

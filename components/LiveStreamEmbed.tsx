@@ -15,10 +15,31 @@ export function LiveStreamEmbed({ tournament }: { tournament: ClientTournament }
   // Find a representative live match — preference goes to a match that
   // explicitly tags its own Twitch URL, then anything else live (we'll fall
   // back to the tournament default channel).
+  //
+  // Guard against stale LIVE rows: HLTV's live-sync only refreshes matches
+  // that have an hltvId. A Liquipedia-sourced ghost row marked LIVE
+  // manually (or via a buggy sync) would otherwise leave the Twitch embed
+  // up indefinitely. We require the match's startTime to be within a
+  // sensible window — started at most 6h ago, scheduled at most 30min in
+  // the future (warmup overlap). If startTime is null, we trust HLTV
+  // status only when an hltvId is present (real adopted row).
+  const now = Date.now();
+  const maxAgeMs = 6 * 60 * 60 * 1000;
+  const maxFutureMs = 30 * 60 * 1000;
   const liveMatches: ClientMatch[] = [];
   for (const s of tournament.stages) {
     for (const m of s.matches) {
-      if (m.status === "LIVE") liveMatches.push(m);
+      if (m.status !== "LIVE") continue;
+      if (m.startTime) {
+        const ts = new Date(m.startTime).getTime();
+        if (ts < now - maxAgeMs) continue; // probably stale
+        if (ts > now + maxFutureMs) continue; // not started yet
+      } else if (!m.hltvId) {
+        // No timestamp AND no hltvId — we can't trust the status flag
+        // because nothing keeps it fresh.
+        continue;
+      }
+      liveMatches.push(m);
     }
   }
 

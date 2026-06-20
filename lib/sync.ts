@@ -235,16 +235,15 @@ export async function syncTournament(
 
     // Ghost adoption: if the daily Liquipedia schedule sync already wrote a
     // PENDING row for these two teams with no hltvId, claim it by stamping
-    // the now-known hltvId on it AND re-targeting its stageId to whatever
-    // we resolved this run. That way the upsert below finds the same row
-    // instead of creating a duplicate.
+    // the now-known hltvId on it. The ghost's STAGE is preserved — the
+    // Liquipedia ghost was placed in the CORRECT stage (e.g. PLAYOFFS for
+    // QF/SF matches), and HLTV's force-tagged stageKind is unreliable, so
+    // we don't want to drag the ghost into the wrong stage.
     //
-    // We scope by (tournamentId, team pair) — NOT by stageId — because the
-    // ghost may have been written under a different stage kind than this
-    // sync resolved (e.g. Liquipedia wrote PLAYOFFS but a pre-disambiguation
-    // sync force-tagged the HLTV match as STAGE_3). Cross-stage adoption is
-    // safe: two teams rarely play each other across multiple stages of the
-    // same Major, and even then the hltvId upsert keeps things idempotent.
+    // Conflict handling: if another row already owns this hltvId (a
+    // force-tagged duplicate created on a prior sync, before the ghost
+    // existed), delete that duplicate first and then adopt the ghost.
+    // The ghost wins because it represents the correct bracket placement.
     if (teamAId && teamBId) {
       const ghost = await prisma.match.findFirst({
         where: {
@@ -259,13 +258,36 @@ export async function syncTournament(
         select: { id: true },
       });
       if (ghost) {
-        await prisma.match.update({
-          where: { id: ghost.id },
-          data: {
-            hltvId: m.hltvId,
-            stageId: stageIdByKind[stageKind],
-          },
-        });
+        try {
+          await prisma.match.update({
+            where: { id: ghost.id },
+            data: { hltvId: m.hltvId },
+          });
+        } catch (e: any) {
+          if (e?.code === "P2002") {
+            // Another row already owns this hltvId. Delete that duplicate
+            // (it was force-tag-created in the wrong stage) and adopt the
+            // ghost. Retry the stamp.
+            const conflicting = await prisma.match.findUnique({
+              where: { hltvId: m.hltvId },
+              select: { id: true, stageId: true },
+            });
+            if (conflicting && conflicting.id !== ghost.id) {
+              await prisma.match.delete({ where: { id: conflicting.id } });
+              await prisma.match.update({
+                where: { id: ghost.id },
+                data: { hltvId: m.hltvId },
+              });
+              console.log(
+                `[sync] resolved hltvId=${m.hltvId} duplicate — adopted ghost ${ghost.id}, removed dupe ${conflicting.id}`,
+              );
+            } else {
+              throw e;
+            }
+          } else {
+            throw e;
+          }
+        }
       }
     }
 

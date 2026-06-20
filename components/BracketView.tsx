@@ -195,10 +195,7 @@ export function BracketView({
           <PlayoffBracket
             key={stage.id}
             stage={stage}
-            overrides={overrides}
-            setOverride={setOverride}
             pickem={myPickem}
-            score={myScore}
             tournament={tournament}
           />
         ) : (

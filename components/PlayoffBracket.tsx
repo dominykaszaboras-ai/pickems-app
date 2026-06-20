@@ -1,28 +1,31 @@
 "use client";
 import { useMemo, useState } from "react";
 import { STAGE_LABEL, type ClientMatch, type ClientPickem, type ClientStage, type ClientTeam, type ClientTournament } from "@/lib/types";
-import { effectiveWinner, type ScoreLine, type WinnerOverrides } from "@/lib/scoring";
 import { MatchCard } from "./MatchCard";
 
-// Mini playoff bracket rendered with a fixed CSS-grid layout so QF/SF/Final
-// columns align like a real single-elimination bracket (Liquipedia style):
+// Read-only mini playoff bracket. Fixed CSS-grid layout so QF/SF/Final
+// columns align vertically like a real single-elimination bracket:
 //
-//   QF1 ┐
-//        ├─ SF1 ┐
-//   QF2 ┘       │
-//                ├─ Final
-//   QF3 ┐       │
-//        ├─ SF2 ┘
-//   QF4 ┘
+//   QF1
+//        SF1
+//   QF2
+//                  Final
+//   QF3
+//        SF2
+//   QF4
 //
 // Each row in the CSS grid is one "QF slot" tall. QFs occupy 1 row, SFs
 // span 2 rows centered over their two feeders, the Final spans all 4 rows.
+// Connector lines were removed — the geometry has to track row height +
+// row gap exactly, which becomes brittle once card heights vary. The
+// visual grouping is clear enough without them.
 //
 // Progression rule: a team only appears in an SF/Final slot once its
-// feeder match is FINISHED (or simulated via overrides). A QF that's still
-// LIVE / PENDING does NOT advance its leading team — we wait for the full
-// Bo3 to conclude. This is intentional: it mirrors how IRL brackets
-// display TBD until each round resolves.
+// feeder match is FINISHED. A QF that's still LIVE / PENDING does NOT
+// advance its leading team — we wait for the full Bo3 to conclude.
+//
+// Simulation is intentionally not exposed on this surface. Predicted
+// bracket paths live on /pickems (the picker).
 
 const ROUND_LABELS: Record<number, string> = {
   1: "Quarter-finals",
@@ -37,19 +40,11 @@ const COLUMN_WIDTHS = { qf: 220, sf: 220, final: 240 } as const;
 
 export function PlayoffBracket({
   stage,
-  overrides,
-  setOverride,
   pickem,
   tournament,
 }: {
   stage: ClientStage;
-  overrides: WinnerOverrides;
-  setOverride: (matchId: string, teamId: string | null) => void;
   pickem: ClientPickem | null;
-  // Kept for API compatibility — currently unused, PickSummary is no longer
-  // rendered inside this bracket (the per-stage pick chip list was noisy and
-  // duplicated info shown elsewhere).
-  score: ScoreLine | null;
   tournament?: ClientTournament;
 }) {
   // Bucket and order matches by round + slot. We rely on bracketSlot for
@@ -71,17 +66,9 @@ export function PlayoffBracket({
   }, [stage]);
 
   // For each match, resolve the team that should advance to its next-round
-  // slot — either the real FINISHED winner, or a user-simulated override.
-  // Returns null if the match is still LIVE/PENDING with no override.
-  //
-  // We intentionally do NOT fall back to "user's pick for this round" — the
-  // /bracket page is the LIVE view, not a prediction projection. Showing a
-  // user's Final pick in the Final cell before the SF has even played is
-  // confusing. Predicted bracket paths live on /pickems (the picker) and
-  // can also be summoned here by clicking through the simulator.
+  // slot — the real FINISHED winner, or null if still LIVE/PENDING.
   function advancingTeamId(m: ClientMatch | null): string | null {
     if (!m) return null;
-    if (overrides[m.id] !== undefined) return overrides[m.id];
     if (m.status !== "FINISHED") return null;
     return m.winnerId;
   }
@@ -93,18 +80,19 @@ export function PlayoffBracket({
   }, [stage.teams]);
 
   // Build a "shadow" match for SF/Final that mirrors the stored row's
-  // identity (so MatchCard sim overrides still key correctly) but takes
-  // its teamA/teamB from the feeders' winners. When a feeder is still
-  // undecided, the corresponding slot stays null and the slot renders as
-  // a "TBD" placeholder.
+  // identity but takes teamA/teamB from the feeders' winners. We prefer
+  // the stored row's teams when set (auto-progression or Liquipedia
+  // populates these once feeders settle); the shadow is the fallback
+  // for tournaments where bracket progression hasn't run yet.
   function shadowedRound(
     self: ClientMatch | null,
     feederA: ClientMatch | null,
     feederB: ClientMatch | null,
   ): ClientMatch | null {
     if (!self) return null;
-    const aId = advancingTeamId(feederA);
-    const bId = advancingTeamId(feederB);
+    if (self.teamA && self.teamB) return self; // already fully populated
+    const aId = self.teamA?.id ?? advancingTeamId(feederA);
+    const bId = self.teamB?.id ?? advancingTeamId(feederB);
     return {
       ...self,
       teamA: aId ? teamsById.get(aId) ?? null : null,
@@ -157,7 +145,7 @@ export function PlayoffBracket({
             </div>
 
             <div
-              className="relative grid"
+              className="grid"
               style={{
                 gridTemplateColumns: `${COLUMN_WIDTHS.qf}px ${COLUMN_WIDTHS.sf}px ${COLUMN_WIDTHS.final}px`,
                 gridTemplateRows: `repeat(${QF_COUNT}, minmax(0, 1fr))`,
@@ -165,7 +153,6 @@ export function PlayoffBracket({
                 rowGap: `${ROW_GUTTER}px`,
               }}
             >
-              <BracketConnectors />
               {qfs.map((m, i) => (
                 <div
                   key={`qf-${i}`}
@@ -174,8 +161,6 @@ export function PlayoffBracket({
                 >
                   <BracketSlot
                     match={m}
-                    overrides={overrides}
-                    setOverride={setOverride}
                     pickHints={hintByRound[1]}
                     tournament={tournament}
                   />
@@ -190,8 +175,6 @@ export function PlayoffBracket({
                 >
                   <BracketSlot
                     match={m}
-                    overrides={overrides}
-                    setOverride={setOverride}
                     pickHints={hintByRound[2]}
                     tournament={tournament}
                   />
@@ -204,8 +187,6 @@ export function PlayoffBracket({
               >
                 <BracketSlot
                   match={finalShadow}
-                  overrides={overrides}
-                  setOverride={setOverride}
                   pickHints={hintByRound[3]}
                   tournament={tournament}
                   championHint={hintByRound[4]}
@@ -219,80 +200,13 @@ export function PlayoffBracket({
   );
 }
 
-// Pre-computed connector geometry. All percentages off the same total grid
-// width (QF + gap + SF + gap + Final). Plucked out of BracketConnectors so
-// they're calculated once at module load rather than on every render.
-const CONNECTOR_GEOM = (() => {
-  const totalW = COLUMN_WIDTHS.qf + COLUMN_GAP + COLUMN_WIDTHS.sf + COLUMN_GAP + COLUMN_WIDTHS.final;
-  const qfRight = (COLUMN_WIDTHS.qf / totalW) * 100;
-  const sfLeft = ((COLUMN_WIDTHS.qf + COLUMN_GAP) / totalW) * 100;
-  const sfRight = ((COLUMN_WIDTHS.qf + COLUMN_GAP + COLUMN_WIDTHS.sf) / totalW) * 100;
-  const finalLeft = ((COLUMN_WIDTHS.qf + COLUMN_GAP + COLUMN_WIDTHS.sf + COLUMN_GAP) / totalW) * 100;
-  return {
-    qfRight,
-    sfLeft,
-    sfRight,
-    finalLeft,
-    qfSfMid: (qfRight + sfLeft) / 2,
-    sfFinalMid: (sfRight + finalLeft) / 2,
-    // QF rows centered at 12.5/37.5/62.5/87.5%, SFs at 25/75%, Final at 50%.
-    qfYs: [12.5, 37.5, 62.5, 87.5] as const,
-    sfYs: [25, 75] as const,
-    finalY: 50,
-  };
-})();
-
-// SVG overlay that draws the Liquipedia-style connector lines between
-// QF→SF and SF→Final. Positioned absolute over the grid; pointer-events
-// off so it doesn't intercept clicks on the match cards underneath.
-//
-// Coordinates use percentages with preserveAspectRatio=none so the lines
-// scale with the grid. `vectorEffect="non-scaling-stroke"` keeps the
-// stroke 1px regardless of scaling.
-function BracketConnectors() {
-  const { qfRight, sfLeft, sfRight, finalLeft, qfSfMid, sfFinalMid, qfYs, sfYs, finalY } = CONNECTOR_GEOM;
-  return (
-    <svg
-      aria-hidden
-      className="pointer-events-none absolute inset-0 h-full w-full text-line"
-      preserveAspectRatio="none"
-      viewBox="0 0 100 100"
-    >
-      {/* QF → SF connectors. Each SF is fed by two QFs above/below it. */}
-      {sfYs.map((sfY, sfIdx) => {
-        const topQf = qfYs[sfIdx * 2];
-        const bottomQf = qfYs[sfIdx * 2 + 1];
-        return (
-          <g key={`qf-sf-${sfIdx}`}>
-            <line x1={qfRight} y1={topQf} x2={qfSfMid} y2={topQf} stroke="currentColor" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-            <line x1={qfRight} y1={bottomQf} x2={qfSfMid} y2={bottomQf} stroke="currentColor" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-            <line x1={qfSfMid} y1={topQf} x2={qfSfMid} y2={bottomQf} stroke="currentColor" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-            <line x1={qfSfMid} y1={sfY} x2={sfLeft} y2={sfY} stroke="currentColor" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-          </g>
-        );
-      })}
-      {/* SF → Final */}
-      <g>
-        <line x1={sfRight} y1={sfYs[0]} x2={sfFinalMid} y2={sfYs[0]} stroke="currentColor" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-        <line x1={sfRight} y1={sfYs[1]} x2={sfFinalMid} y2={sfYs[1]} stroke="currentColor" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-        <line x1={sfFinalMid} y1={sfYs[0]} x2={sfFinalMid} y2={sfYs[1]} stroke="currentColor" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-        <line x1={sfFinalMid} y1={finalY} x2={finalLeft} y2={finalY} stroke="currentColor" strokeWidth={1} vectorEffect="non-scaling-stroke" />
-      </g>
-    </svg>
-  );
-}
-
 function BracketSlot({
   match,
-  overrides,
-  setOverride,
   pickHints,
   tournament,
   championHint,
 }: {
   match: ClientMatch | null;
-  overrides: WinnerOverrides;
-  setOverride: (matchId: string, teamId: string | null) => void;
   pickHints?: { [teamId: string]: string | undefined };
   tournament?: ClientTournament;
   championHint?: { [teamId: string]: string | undefined };
@@ -305,12 +219,14 @@ function BracketSlot({
     );
   }
   const mergedHints = { ...(pickHints ?? {}), ...(championHint ?? {}) };
+  // Read-only: pass match.winnerId as the effective winner so MatchCard
+  // tints + ticks the real winner, and a no-op onPick to absorb clicks.
   return (
     <div className="w-full">
       <MatchCard
         match={match}
-        effectiveWinnerId={effectiveWinner(match, overrides)}
-        onPick={setOverride}
+        effectiveWinnerId={match.winnerId}
+        onPick={() => {}}
         pickHints={mergedHints}
         tournament={tournament}
       />

@@ -23,6 +23,7 @@
 import { useMemo } from "react";
 import clsx from "clsx";
 import type { ClientMatch, ClientTeam } from "@/lib/types";
+import type { ScoreLine } from "@/lib/scoring";
 import { TeamLogo } from "./TeamLogo";
 
 export interface PlayoffPick {
@@ -33,20 +34,26 @@ export interface PlayoffPick {
 type Slot = "sf1" | "sf2";
 
 export function PlayoffBracketPicker({
-  qfMatches,
+  playoffMatches,
   picks,
   setPicks,
+  pickResults,
 }: {
-  qfMatches: ClientMatch[];
+  playoffMatches: ClientMatch[];
   picks: PlayoffPick[];
   setPicks: (p: PlayoffPick[]) => void;
+  // Per-pick correctness for the user's SAVED picks. Used to tint each row
+  // green/red once results land. Empty when the user has no submitted
+  // picks yet (so the picker stays neutral while they're filling it in).
+  pickResults?: ScoreLine["pickResults"];
 }) {
   // Sort QF matches in bracket order. Liquipedia-sourced rows don't carry
-  // bracketSlot, so we fall back to startTime ascending.
+  // bracketSlot, so we fall back to startTime ascending. Limit to 4 so a
+  // stray SF/Final row in the same `playoffMatches` array doesn't bleed in.
   const qfSorted = useMemo(
     () =>
-      [...qfMatches]
-        .filter((m) => m.teamA && m.teamB)
+      [...playoffMatches]
+        .filter((m) => (m.bracketRound == null || m.bracketRound === 1) && m.teamA && m.teamB)
         .sort((a, b) => {
           if (a.bracketSlot != null && b.bracketSlot != null) {
             return a.bracketSlot - b.bracketSlot;
@@ -56,8 +63,40 @@ export function PlayoffBracketPicker({
           return ta - tb;
         })
         .slice(0, 4),
-    [qfMatches],
+    [playoffMatches],
   );
+
+  // Look up SF1 / SF2 / Final DB rows so we can lock the corresponding picker
+  // rows when those matches FINISH. Keyed by bracketRound + bracketSlot.
+  const sfMatchBySlot = useMemo(() => {
+    const out: Record<Slot, ClientMatch | null> = { sf1: null, sf2: null };
+    for (const m of playoffMatches) {
+      if (m.bracketRound !== 2) continue;
+      if (m.bracketSlot === 1) out.sf1 = m;
+      else if (m.bracketSlot === 2) out.sf2 = m;
+    }
+    return out;
+  }, [playoffMatches]);
+  const finalMatch = useMemo(
+    () => playoffMatches.find((m) => m.bracketRound === 3) ?? null,
+    [playoffMatches],
+  );
+
+  // Correctness lookup keyed by `${round}:${teamId}` — built from the saved
+  // pickem's scoring output. `true` = pick landed, `false` = busted (team
+  // eliminated or lost), null/undefined = still in flight.
+  const correctByPick = useMemo(() => {
+    const out = new Map<string, boolean | null>();
+    for (const r of pickResults ?? []) {
+      if (r.kind !== "PLAYOFF_WINNER" || r.round == null) continue;
+      out.set(`${r.round}:${r.teamId}`, r.correct);
+    }
+    return out;
+  }, [pickResults]);
+  function correctnessFor(round: number, teamId: string | null | undefined): boolean | null {
+    if (!teamId) return null;
+    return correctByPick.get(`${round}:${teamId}`) ?? null;
+  }
 
   // ---- Derived state ----------------------------------------------------
 
@@ -205,32 +244,32 @@ export function PlayoffBracketPicker({
   // between the two SFs. The pt-* offsets line everything up visually.
   return (
     <section className="rounded-2xl border border-line bg-panel p-5">
-      <div className="mb-1 flex items-center justify-between">
+      <div className="mb-4 flex items-center justify-between">
         <h2 className="text-lg font-semibold">Playoffs Bracket</h2>
         <span className="text-xs text-muted">
           Click a team to advance them
         </span>
       </div>
-      <p className="mb-5 text-sm text-muted">
-        QF winner = <span className="text-accent">1 pt</span>, SF ={" "}
-        <span className="text-accent">2 pts</span>, Final ={" "}
-        <span className="text-accent">4 pts</span>, Champion ={" "}
-        <span className="text-accent">4 pts</span>.
-      </p>
 
       <div className="flex gap-6 overflow-x-auto pb-2">
         {/* Quarterfinals */}
         <Column title="Quarterfinals">
           <div className="flex flex-col gap-4">
-            {qfSorted.map((m) => (
-              <BracketMatchCard
-                key={m.id}
-                teamA={m.teamA!}
-                teamB={m.teamB!}
-                winnerId={qfWinnerByMatchId[m.id]}
-                onPick={(teamId) => onPickQf(m.id, teamId)}
-              />
-            ))}
+            {qfSorted.map((m) => {
+              const locked = m.status === "FINISHED";
+              const userPick = qfWinnerByMatchId[m.id];
+              return (
+                <BracketMatchCard
+                  key={m.id}
+                  teamA={m.teamA!}
+                  teamB={m.teamB!}
+                  winnerId={userPick}
+                  onPick={(teamId) => onPickQf(m.id, teamId)}
+                  locked={locked}
+                  pickCorrect={correctnessFor(1, userPick)}
+                />
+              );
+            })}
           </div>
         </Column>
 
@@ -238,16 +277,23 @@ export function PlayoffBracketPicker({
         <Column title="Semifinals">
           {/* Vertical spacing aligned to QF cards (offset so SF sits between QF pairs). */}
           <div className="flex flex-col gap-[88px] pt-[40px]">
-            {sfPairings.map((p) => (
-              <BracketMatchCard
-                key={p.slot}
-                teamA={p.a}
-                teamB={p.b}
-                winnerId={sfWinnerBySlot[p.slot]}
-                onPick={(teamId) => onPickSf(p.slot, teamId)}
-                placeholder="Pick QF winners first"
-              />
-            ))}
+            {sfPairings.map((p) => {
+              const sfMatch = sfMatchBySlot[p.slot];
+              const locked = sfMatch?.status === "FINISHED";
+              const userPick = sfWinnerBySlot[p.slot];
+              return (
+                <BracketMatchCard
+                  key={p.slot}
+                  teamA={p.a}
+                  teamB={p.b}
+                  winnerId={userPick}
+                  onPick={(teamId) => onPickSf(p.slot, teamId)}
+                  placeholder="Pick QF winners first"
+                  locked={locked}
+                  pickCorrect={correctnessFor(2, userPick)}
+                />
+              );
+            })}
           </div>
         </Column>
 
@@ -260,8 +306,13 @@ export function PlayoffBracketPicker({
               winnerId={finalWinnerId}
               onPick={onPickFinal}
               placeholder="Pick SF winners first"
+              locked={finalMatch?.status === "FINISHED"}
+              pickCorrect={correctnessFor(3, finalWinnerId)}
             />
-            <ChampionCard team={finalWinnerTeam} />
+            <ChampionCard
+              team={finalWinnerTeam}
+              correct={correctnessFor(4, finalWinnerId)}
+            />
           </div>
         </Column>
       </div>
@@ -286,12 +337,20 @@ function BracketMatchCard({
   winnerId,
   onPick,
   placeholder,
+  locked = false,
+  pickCorrect = null,
 }: {
   teamA: ClientTeam | null;
   teamB: ClientTeam | null;
   winnerId: string | null;
   onPick: (teamId: string) => void;
   placeholder?: string;
+  // True when the underlying match has FINISHED — disables click-to-pick
+  // so the user can't retro-edit a settled result.
+  locked?: boolean;
+  // null = pick still in flight (no tint); true = correct (green tint);
+  // false = busted (red tint). Applied only to the SELECTED row.
+  pickCorrect?: boolean | null;
 }) {
   const isEmpty = !teamA && !teamB;
   if (isEmpty) {
@@ -302,10 +361,31 @@ function BracketMatchCard({
     );
   }
   return (
-    <div className="overflow-hidden rounded-xl border border-line bg-panel2">
-      <TeamRow team={teamA} selected={!!winnerId && winnerId === teamA?.id} onPick={onPick} />
+    <div
+      className={clsx(
+        "overflow-hidden rounded-xl border bg-panel2",
+        // Outer border colour mirrors the pick's outcome when settled — a
+        // subtle cue you can see at a glance scanning down the bracket.
+        pickCorrect === true && "border-win/60",
+        pickCorrect === false && "border-loss/60",
+        pickCorrect == null && "border-line",
+      )}
+    >
+      <TeamRow
+        team={teamA}
+        selected={!!winnerId && winnerId === teamA?.id}
+        onPick={onPick}
+        locked={locked}
+        pickCorrect={winnerId === teamA?.id ? pickCorrect : null}
+      />
       <div className="border-t border-line" />
-      <TeamRow team={teamB} selected={!!winnerId && winnerId === teamB?.id} onPick={onPick} />
+      <TeamRow
+        team={teamB}
+        selected={!!winnerId && winnerId === teamB?.id}
+        onPick={onPick}
+        locked={locked}
+        pickCorrect={winnerId === teamB?.id ? pickCorrect : null}
+      />
     </div>
   );
 }
@@ -314,10 +394,14 @@ function TeamRow({
   team,
   selected,
   onPick,
+  locked = false,
+  pickCorrect = null,
 }: {
   team: ClientTeam | null;
   selected: boolean;
   onPick: (teamId: string) => void;
+  locked?: boolean;
+  pickCorrect?: boolean | null;
 }) {
   if (!team) {
     return (
@@ -330,23 +414,33 @@ function TeamRow({
   return (
     <button
       type="button"
-      onClick={() => onPick(team.id)}
-      // Drag affordance: dragging the team logo elsewhere doesn't go anywhere
-      // (no drop targets) but dragging it ONTO the same match's other team
-      // would be visually confusing — easier to keep drag purely cosmetic.
-      // Click + keyboard cover all real selection.
+      onClick={() => {
+        if (!locked) onPick(team.id);
+      }}
+      disabled={locked}
       draggable={false}
       className={clsx(
         "flex w-full items-center gap-2 px-3 py-2 text-left transition-colors",
-        selected
-          ? "bg-accent/20 text-accent ring-1 ring-inset ring-accent"
-          : "hover:bg-line/40",
+        // Settled state — tint based on whether the user's pick landed.
+        selected && pickCorrect === true && "bg-win/15 text-win ring-1 ring-inset ring-win/50",
+        selected && pickCorrect === false && "bg-loss/15 text-loss ring-1 ring-inset ring-loss/50",
+        // In-flight state — keep the accent highlight.
+        selected && pickCorrect == null && "bg-accent/20 text-accent ring-1 ring-inset ring-accent",
+        !selected && !locked && "hover:bg-line/40",
+        !selected && locked && "opacity-60",
       )}
       aria-pressed={selected}
+      aria-disabled={locked}
     >
       <TeamLogo team={team} size={28} />
       <span className="flex-1 truncate text-sm font-medium">{team.name}</span>
-      {selected && (
+      {selected && pickCorrect === true && (
+        <span className="font-mono text-xs text-win">✓</span>
+      )}
+      {selected && pickCorrect === false && (
+        <span className="font-mono text-xs text-loss">✗</span>
+      )}
+      {selected && pickCorrect == null && (
         <span className="text-[10px] font-semibold uppercase tracking-wide text-accent">
           Advances
         </span>
@@ -355,7 +449,13 @@ function TeamRow({
   );
 }
 
-function ChampionCard({ team }: { team: ClientTeam | null }) {
+function ChampionCard({
+  team,
+  correct = null,
+}: {
+  team: ClientTeam | null;
+  correct?: boolean | null;
+}) {
   if (!team) {
     return (
       <div className="rounded-xl border border-dashed border-line bg-panel/40 px-3 py-6 text-center text-xs text-muted">
@@ -364,9 +464,25 @@ function ChampionCard({ team }: { team: ClientTeam | null }) {
     );
   }
   return (
-    <div className="rounded-xl border border-accent/60 bg-accent/10 px-3 py-4 text-center">
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-accent">
+    <div
+      className={clsx(
+        "rounded-xl border px-3 py-4 text-center",
+        correct === true && "border-win/60 bg-win/10",
+        correct === false && "border-loss/60 bg-loss/10",
+        correct == null && "border-accent/60 bg-accent/10",
+      )}
+    >
+      <div
+        className={clsx(
+          "text-[10px] font-semibold uppercase tracking-wide",
+          correct === true && "text-win",
+          correct === false && "text-loss",
+          correct == null && "text-accent",
+        )}
+      >
         Champion
+        {correct === true && " ✓"}
+        {correct === false && " ✗"}
       </div>
       <div className="mt-2 flex flex-col items-center gap-2">
         <TeamLogo team={team} size={48} />

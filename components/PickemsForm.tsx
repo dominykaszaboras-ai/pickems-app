@@ -12,6 +12,7 @@ import {
 } from "@/lib/types";
 import { TeamLogo } from "./TeamLogo";
 import { PlayoffBracketPicker, type PlayoffPick } from "./PlayoffBracketPicker";
+import { scorePickem } from "@/lib/scoring";
 
 type SwissPicks = {
   three_oh: string[];   // up to PERFECT_COUNT teams
@@ -39,13 +40,10 @@ export function PickemsForm({
   }
   const teamsFor = (k: StageKind): ClientTeam[] => stagesByKind.get(k) ?? [];
   const isUnlocked = (k: StageKind): boolean => (stagesByKind.get(k)?.length ?? 0) > 0;
-  // The QF matchups feed the bracket picker. Pulled from the PLAYOFFS stage's
-  // matches so the picker can show "Aurora vs BetBoom" etc. rather than just
-  // a flat list of teams.
+  // The playoff matches feed the bracket picker — QF/SF/Final all of them so
+  // the picker can lock + tint rows whose underlying match has FINISHED.
   const playoffStage = tournament.stages.find((s) => s.kind === "PLAYOFFS");
-  const qfMatches = (playoffStage?.matches ?? []).filter(
-    (m) => m.teamA && m.teamB,
-  );
+  const playoffMatches = playoffStage?.matches ?? [];
   // Friendly "opens after X" copy for locked stages.
   const lockedReason: Record<StageKind, string> = {
     STAGE_1: "Stage 1 hasn't been synced yet.",
@@ -181,9 +179,17 @@ export function PickemsForm({
       )}
       {isUnlocked("PLAYOFFS") ? (
         <PlayoffBracketPicker
-          qfMatches={qfMatches}
+          playoffMatches={playoffMatches}
           picks={playoffs}
           setPicks={setPlayoffs}
+          // Pass the *saved* pickem (`initial`) — we want correctness based
+          // on what's been actually submitted, not the in-progress edits.
+          // Re-scores cheaply on every render but the input is small.
+          pickResults={
+            initial
+              ? scorePickem(tournament, initial, {}).pickResults
+              : []
+          }
         />
       ) : (
         <LockedStage title="Playoffs" reason={lockedReason.PLAYOFFS} />

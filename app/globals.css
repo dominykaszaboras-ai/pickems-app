@@ -19,15 +19,18 @@
 }
 
 html.light {
-  --c-ink: 246 247 250;       /* page background */
-  --c-panel: 255 255 255;     /* card background */
-  --c-panel2: 240 243 248;    /* secondary panel */
-  --c-line: 222 227 235;      /* borders */
-  --c-text: 17 24 39;         /* primary text (slate-900) */
-  --c-muted: 90 102 122;      /* secondary text */
-  --c-accent: 217 119 6;      /* amber-600 — slightly darker for AA contrast */
-  --c-win: 21 145 70;
-  --c-loss: 209 36 60;
+  /* Warm off-white palette — softer than pure-white panels which read
+   * as harsh next to the dark UI styling. Borders + muted text tuned
+   * down so the page doesn't feel hyper-contrasty. */
+  --c-ink: 234 237 244;       /* page background — soft warm grey */
+  --c-panel: 244 246 250;     /* card background — almost-white but not glare */
+  --c-panel2: 226 231 240;    /* secondary panel — slightly darker than ink */
+  --c-line: 200 208 220;      /* borders — softer separation */
+  --c-text: 28 34 48;          /* primary text — slate-800 instead of pure slate-900 */
+  --c-muted: 92 104 124;      /* secondary text */
+  --c-accent: 191 102 8;      /* amber-700 — dialled down saturation */
+  --c-win: 22 130 64;
+  --c-loss: 188 30 56;
   color-scheme: light;
 }
 

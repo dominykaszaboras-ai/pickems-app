@@ -4,6 +4,8 @@ import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { getActiveTournament, getUserPickem } from "@/lib/queries";
 import { PickemsForm } from "@/components/PickemsForm";
+import { PickemsPlayoffsPanel } from "@/components/PickemsPlayoffsPanel";
+import { FriendsPicksProvider } from "@/components/FriendsPicksProvider";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,6 +62,9 @@ export default async function PickemsPage() {
         </div>
       )}
       <PickemsForm tournament={tournament} initial={initial} />
+      <FriendsPicksProvider>
+        <PickemsPlayoffsPanel tournament={tournament} pickem={initial} />
+      </FriendsPicksProvider>
     </main>
   );
 }

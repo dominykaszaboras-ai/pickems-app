@@ -29,19 +29,45 @@ export interface LiquipediaMatch {
 }
 
 // Each entry maps a Major stage to its Liquipedia page slug under
-// /counterstrike/. Update as new Cologne stages are published.
+// /counterstrike/. Built from the LIQUIPEDIA_TOURNAMENT_BASE env var
+// (e.g. "Intel_Extreme_Masters/2026/Cologne") + a per-stage suffix.
+// Falls back to the Cologne 2026 mapping when no env is set, so existing
+// deployments keep working with no migration.
 export type LiquipediaStageMap = Partial<Record<StageKind, string>>;
 
-export const COLOGNE_2026_LIQUIPEDIA: LiquipediaStageMap = {
-  STAGE_1: "Intel_Extreme_Masters/2026/Cologne/Stage_1",
-  STAGE_2: "Intel_Extreme_Masters/2026/Cologne/Stage_2",
-  STAGE_3: "Intel_Extreme_Masters/2026/Cologne/Stage_3",
-  PLAYOFFS: "Intel_Extreme_Masters/2026/Cologne/Playoffs",
-};
+const LIQUIPEDIA_BASE_FALLBACK = "Intel_Extreme_Masters/2026/Cologne";
 
-// Umbrella tournament page slug for the broadcast channel lookup. Update
-// alongside HLTV_EVENT_ID when a new Major comes around.
-export const COLOGNE_2026_LIQUIPEDIA_UMBRELLA = "Intel_Extreme_Masters/2026/Cologne";
+/**
+ * Resolves the umbrella Liquipedia slug from env. Update Railway's
+ * `LIQUIPEDIA_TOURNAMENT_BASE` when moving to a new Major (e.g.
+ * "BLAST/Bounty/Spring_2026/Finals"). Trailing slash tolerated.
+ */
+export function getLiquipediaUmbrella(): string {
+  const raw = process.env.LIQUIPEDIA_TOURNAMENT_BASE?.trim();
+  if (!raw) return LIQUIPEDIA_BASE_FALLBACK;
+  return raw.replace(/\/+$/, "");
+}
+
+/**
+ * Per-stage slug derivation. Liquipedia's convention is consistent across
+ * Majors: umbrella + "/Stage_N" or "/Playoffs". If a tournament uses
+ * different suffixes, this is the function to override.
+ */
+export function getLiquipediaStageMap(): LiquipediaStageMap {
+  const base = getLiquipediaUmbrella();
+  return {
+    STAGE_1: `${base}/Stage_1`,
+    STAGE_2: `${base}/Stage_2`,
+    STAGE_3: `${base}/Stage_3`,
+    PLAYOFFS: `${base}/Playoffs`,
+  };
+}
+
+// Legacy named exports — kept so external callers (scripts, probes) that
+// imported the constant directly continue to work. Resolved at module load
+// from whatever env is set at that point.
+export const COLOGNE_2026_LIQUIPEDIA: LiquipediaStageMap = getLiquipediaStageMap();
+export const COLOGNE_2026_LIQUIPEDIA_UMBRELLA: string = getLiquipediaUmbrella();
 
 const API_BASE = "https://liquipedia.net/counterstrike/api.php";
 const USER_AGENT =

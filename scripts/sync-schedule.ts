@@ -14,10 +14,10 @@
 
 import { prisma } from "../lib/db";
 import {
-  COLOGNE_2026_LIQUIPEDIA,
-  COLOGNE_2026_LIQUIPEDIA_UMBRELLA,
   fetchSchedule,
   fetchTournamentBroadcasts,
+  getLiquipediaStageMap,
+  getLiquipediaUmbrella,
   normalizeTeamName,
   type LiquipediaMatch,
 } from "../lib/liquipedia";
@@ -57,7 +57,7 @@ async function main() {
   // Tournament-level broadcasts (main stream channels). These rarely change
   // mid-event, but pulling once a day keeps us honest if the streams pivot
   // between platforms or the org renames a channel.
-  const broadcasts = await fetchTournamentBroadcasts(COLOGNE_2026_LIQUIPEDIA_UMBRELLA);
+  const broadcasts = await fetchTournamentBroadcasts(getLiquipediaUmbrella());
   if (broadcasts.twitchChannel || broadcasts.youtubeChannel) {
     await prisma.tournament.update({
       where: { id: tournament.id },
@@ -71,7 +71,7 @@ async function main() {
     );
   }
 
-  const matches = await fetchSchedule(COLOGNE_2026_LIQUIPEDIA);
+  const matches = await fetchSchedule(getLiquipediaStageMap());
   console.log(`[schedule] Liquipedia returned ${matches.length} matches`);
 
   let upserted = 0;

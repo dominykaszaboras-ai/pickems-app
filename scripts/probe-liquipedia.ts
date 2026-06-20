@@ -6,7 +6,9 @@
 //   npx tsx scripts/probe-liquipedia.ts raw      - dump raw HTML snippet
 //   npx tsx scripts/probe-liquipedia.ts snippet  - dump 1 match-info block
 
-import { COLOGNE_2026_LIQUIPEDIA, fetchSchedule } from "../lib/liquipedia";
+import { fetchSchedule, getLiquipediaStageMap } from "../lib/liquipedia";
+
+const STAGE_MAP = getLiquipediaStageMap();
 
 async function fetchRaw(slug: string): Promise<string | null> {
   const url = `https://liquipedia.net/counterstrike/api.php?action=parse&page=${encodeURIComponent(slug)}&format=json&prop=text&disableeditsection=1&redirects=1`;
@@ -21,7 +23,7 @@ async function main() {
   const mode = process.argv[2] ?? "parse";
 
   if (mode === "raw") {
-    const slug = COLOGNE_2026_LIQUIPEDIA.STAGE_3!;
+    const slug = STAGE_MAP.STAGE_3!;
     const html = await fetchRaw(slug);
     if (!html) return console.error("no html");
     // Find the first timer-object and print 3kb around it.
@@ -32,7 +34,7 @@ async function main() {
   }
 
   if (mode === "snippet") {
-    const slug = COLOGNE_2026_LIQUIPEDIA.STAGE_3!;
+    const slug = STAGE_MAP.STAGE_3!;
     const html = await fetchRaw(slug);
     if (!html) return console.error("no html");
     // Find one .match-info block.
@@ -43,7 +45,7 @@ async function main() {
     return;
   }
 
-  const matches = await fetchSchedule(COLOGNE_2026_LIQUIPEDIA);
+  const matches = await fetchSchedule(STAGE_MAP);
   console.log(`Liquipedia returned ${matches.length} matches`);
   const sorted = [...matches].sort(
     (a, b) => a.startTime.getTime() - b.startTime.getTime(),

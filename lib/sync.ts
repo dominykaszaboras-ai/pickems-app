@@ -16,6 +16,7 @@ import {
   fetchStageMatches,
   fetchTeamLogo,
 } from "./hltv";
+import { progressPlayoffBracket } from "./bracket";
 import type { StageKind } from "./types";
 
 export type StageEventMap = Partial<Record<StageKind, number>>;
@@ -28,6 +29,8 @@ export async function syncLiveMatches(): Promise<{
   inspected: number;
   updated: number;
   liveAfter: number;
+  bracketAdvanced: number;
+  bracketCreated: number;
 }> {
   const lookaheadMs = 30 * 60 * 1000; // start tracking 30 min before listed time
   const now = Date.now();
@@ -72,7 +75,32 @@ export async function syncLiveMatches(): Promise<{
     if (live.status === "LIVE") liveAfter++;
   }
 
-  return { inspected: candidates.length, updated, liveAfter };
+  // Walk the playoff bracket for every tournament we touched and fill any
+  // SF/Final slots whose feeder just FINISHED. Tournaments without any
+  // LIVE/PENDING-soon matches are skipped (no-op cost).
+  let bracketAdvanced = 0;
+  let bracketCreated = 0;
+  const touchedTournaments = new Set<string>();
+  for (const m of candidates) {
+    const t = await prisma.match.findUnique({
+      where: { id: m.id },
+      select: { stage: { select: { tournamentId: true } } },
+    });
+    if (t?.stage.tournamentId) touchedTournaments.add(t.stage.tournamentId);
+  }
+  for (const tid of touchedTournaments) {
+    const r = await progressPlayoffBracket(tid);
+    bracketAdvanced += r.advanced;
+    bracketCreated += r.created;
+  }
+
+  return {
+    inspected: candidates.length,
+    updated,
+    liveAfter,
+    bracketAdvanced,
+    bracketCreated,
+  };
 }
 
 export function parseStageEvents(raw: string | undefined): StageEventMap {
@@ -307,6 +335,10 @@ export async function syncTournament(
     }
   }
 
+  // 6. Advance the playoff bracket: ensure SF/Final placeholders exist,
+  // fill SF/Final teamA/teamB from feeder winners. Idempotent.
+  const bracket = await progressPlayoffBracket(tournament.id);
+
   return {
     tournamentId: tournament.id,
     name: tournament.name,
@@ -314,6 +346,8 @@ export async function syncTournament(
     matchesPulled: all.length,
     stages: Object.keys(stageEvents),
     logosFetched,
+    bracketCreated: bracket.created,
+    bracketAdvanced: bracket.advanced,
   };
 }
 

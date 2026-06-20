@@ -15,11 +15,17 @@ export function UpcomingSchedule({ tournament }: { tournament: ClientTournament 
   const now = Date.now();
 
   // Flatten PENDING matches with a startTime within the horizon window.
+  // We also skip rows whose BOTH teams are still unknown — those are
+  // bracket placeholders (e.g. the Grand Final before any SF concludes)
+  // and showing "TBD vs TBD" in the schedule is just noise. A row with
+  // one known team + one TBD (e.g. Spirit advanced, SF opponent still
+  // playing) is still useful, so we keep those.
   const matches: Array<ClientMatch & { stageName: string }> = [];
   for (const stage of tournament.stages) {
     for (const m of stage.matches) {
       if (m.status !== "PENDING") continue;
       if (!m.startTime) continue;
+      if (!m.teamA && !m.teamB) continue; // both-TBD bracket placeholder
       const t = new Date(m.startTime).getTime();
       if (t < now - 5 * 60_000) continue; // skip matches more than 5 min late
       if (t > now + HORIZON_MS) continue;

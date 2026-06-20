@@ -1,47 +1,22 @@
 // NextAuth v5 (Auth.js) configuration.
 // Exposes: auth, handlers, signIn, signOut.
+//
+// Steam OpenID is the ONLY auth surface. Email/password was removed —
+// no /auth/signup page, no /api/signup route, no Credentials provider
+// for email login. The remaining Credentials provider below (id="steam")
+// only accepts HMAC-signed Steam IDs minted by our own /api/auth/steam
+// callback, so direct browser POSTs without the signature are rejected.
 
 import NextAuth, { type NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import GitHub from "next-auth/providers/github";
 import { PrismaAdapter } from "@auth/prisma-adapter";
-import bcrypt from "bcryptjs";
 import { prisma } from "./db";
-import { rateLimit } from "./rateLimit";
 import { fetchSteamProfile, verifySignedSteamId } from "./steam";
 
 // Explicit type annotation prevents TS from narrowing the array to
 // `CredentialsConfig[]` (which then rejects pushing the OAuth GitHub provider).
 const providers: NextAuthConfig["providers"] = [
-  Credentials({
-    name: "Email & password",
-    credentials: {
-      email: { label: "Email", type: "email" },
-      password: { label: "Password", type: "password" },
-    },
-    async authorize(creds) {
-      const email = String(creds?.email ?? "").toLowerCase().trim();
-      const password = String(creds?.password ?? "");
-      if (!email || !password) return null;
-
-      // Per-email throttle to make online password brute-force impractical.
-      // NextAuth's authorize() doesn't expose the request, so we can't also
-      // limit by IP here — the per-email window is the realistic defense.
-      // Allows ~10 attempts per 15 minutes per email.
-      const limit = rateLimit({
-        key: `login:email:${email}`,
-        limit: 10,
-        windowMs: 15 * 60 * 1000,
-      });
-      if (!limit.ok) return null;
-
-      const user = await prisma.user.findUnique({ where: { email } });
-      if (!user?.passwordHash) return null;
-      const ok = await bcrypt.compare(password, user.passwordHash);
-      if (!ok) return null;
-      return { id: user.id, name: user.name, email: user.email, image: user.image };
-    },
-  }),
   // Steam — invoked only by /api/auth/steam/callback after Steam OpenID
   // verification succeeds. The `token` field is an HMAC of the SteamID with
   // AUTH_SECRET, so only requests originating from our own callback can

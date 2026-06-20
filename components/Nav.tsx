@@ -202,8 +202,9 @@ export function Nav() {
         ) : (
           <div className="flex items-center gap-3 text-sm">
             <ThemeToggle />
-            <Link href="/auth/signin" className="text-muted hover:text-text">Sign in</Link>
-            <Link href="/auth/signup" className="rounded bg-accent px-3 py-1 font-semibold text-ink">Sign up</Link>
+            <Link href="/auth/signin" className="rounded bg-accent px-3 py-1 font-semibold text-ink">
+              Sign in with Steam
+            </Link>
           </div>
         )}
       </div>

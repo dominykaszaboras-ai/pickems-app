@@ -19,7 +19,7 @@ import {
 import { scorePickem } from "@/lib/scoring";
 import { PickSummary } from "@/components/PickSummary";
 import { FriendButton, type ProfileFriendStatus } from "@/components/FriendButton";
-import { SteamLinkPanel } from "@/components/SteamLinkPanel";
+
 import { SteamCodePanel } from "@/components/SteamCodePanel";
 import { MedalBadge } from "@/components/MedalBadge";
 import { loadFriendGraph, statusOf } from "@/lib/friends";
@@ -122,17 +122,9 @@ export default async function ProfilePage({ params }: { params: { id: string } }
 
       {viewerId === profile.id && (
         <div className="mb-6 flex flex-col gap-3">
-          {/* Only show "Link Steam / Unlink Steam" for users who have an
-              email-based account. Steam-only sign-ins obviously have Steam
-              linked, and they can't unlink (no email+password fallback) so
-              the panel would just show a disabled button with an unhelpful
-              "set an email first" hint. */}
-          {profile.email && (
-            <SteamLinkPanel
-              hasSteam={Boolean(profile.steamId)}
-              hasFallback={Boolean(profile.email && profile.passwordHash)}
-            />
-          )}
+          {/* Steam is the only auth surface — the link / unlink panel was
+              for email-based accounts only and has been removed along with
+              the rest of the email-auth flow. */}
           {profile.steamId && (
             <SteamCodePanel
               hasCodeOnFile={Boolean(profile.steamPickemCode)}

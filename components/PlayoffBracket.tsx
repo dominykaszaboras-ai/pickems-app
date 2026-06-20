@@ -146,7 +146,7 @@ export function PlayoffBracket({
             </div>
 
             <div
-              className="grid"
+              className="relative grid"
               style={{
                 gridTemplateColumns: `${COLUMN_WIDTHS.qf}px ${COLUMN_WIDTHS.sf}px ${COLUMN_WIDTHS.final}px`,
                 gridTemplateRows: `repeat(${QF_COUNT}, minmax(0, 1fr))`,
@@ -154,6 +154,7 @@ export function PlayoffBracket({
                 rowGap: `${ROW_GUTTER}px`,
               }}
             >
+              <BracketConnectors />
               {qfs.map((m, i) => (
                 <div
                   key={`qf-${i}`}
@@ -204,6 +205,64 @@ export function PlayoffBracket({
         </div>
       )}
     </section>
+  );
+}
+
+// SVG overlay that draws the Liquipedia-style connector lines between
+// QF→SF and SF→Final. Positioned absolute over the grid; pointer-events
+// off so it doesn't intercept clicks on the match cards underneath.
+//
+// Coordinates use percentages with preserveAspectRatio=none so the lines
+// scale with the grid. `vectorEffect="non-scaling-stroke"` keeps the
+// stroke 1px regardless of scaling.
+function BracketConnectors() {
+  // Horizontal anchors expressed as a fraction of the grid width.
+  // (Must stay in sync with COLUMN_WIDTHS + COLUMN_GAP above.)
+  const totalW = COLUMN_WIDTHS.qf + COLUMN_GAP + COLUMN_WIDTHS.sf + COLUMN_GAP + COLUMN_WIDTHS.final;
+  const qfRight = (COLUMN_WIDTHS.qf / totalW) * 100;
+  const sfLeft = ((COLUMN_WIDTHS.qf + COLUMN_GAP) / totalW) * 100;
+  const sfRight = ((COLUMN_WIDTHS.qf + COLUMN_GAP + COLUMN_WIDTHS.sf) / totalW) * 100;
+  const finalLeft = ((COLUMN_WIDTHS.qf + COLUMN_GAP + COLUMN_WIDTHS.sf + COLUMN_GAP) / totalW) * 100;
+  const qfSfMid = (qfRight + sfLeft) / 2;
+  const sfFinalMid = (sfRight + finalLeft) / 2;
+
+  // Vertical anchors: QF rows centered at 12.5/37.5/62.5/87.5%, SFs at
+  // 25/75%, Final at 50%.
+  const qfYs = [12.5, 37.5, 62.5, 87.5];
+  const sfYs = [25, 75];
+  const finalY = 50;
+
+  const stroke = "currentColor";
+  const sw = 1;
+
+  return (
+    <svg
+      aria-hidden
+      className="pointer-events-none absolute inset-0 h-full w-full text-line"
+      preserveAspectRatio="none"
+      viewBox="0 0 100 100"
+    >
+      {/* QF → SF connectors. Each SF is fed by two QFs above/below it. */}
+      {sfYs.map((sfY, sfIdx) => {
+        const topQf = qfYs[sfIdx * 2];
+        const bottomQf = qfYs[sfIdx * 2 + 1];
+        return (
+          <g key={`qf-sf-${sfIdx}`}>
+            <line x1={qfRight} y1={topQf} x2={qfSfMid} y2={topQf} stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" />
+            <line x1={qfRight} y1={bottomQf} x2={qfSfMid} y2={bottomQf} stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" />
+            <line x1={qfSfMid} y1={topQf} x2={qfSfMid} y2={bottomQf} stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" />
+            <line x1={qfSfMid} y1={sfY} x2={sfLeft} y2={sfY} stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" />
+          </g>
+        );
+      })}
+      {/* SF → Final */}
+      <g>
+        <line x1={sfRight} y1={sfYs[0]} x2={sfFinalMid} y2={sfYs[0]} stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" />
+        <line x1={sfRight} y1={sfYs[1]} x2={sfFinalMid} y2={sfYs[1]} stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" />
+        <line x1={sfFinalMid} y1={sfYs[0]} x2={sfFinalMid} y2={sfYs[1]} stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" />
+        <line x1={sfFinalMid} y1={finalY} x2={finalLeft} y2={finalY} stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" />
+      </g>
+    </svg>
   );
 }
 

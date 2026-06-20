@@ -9,25 +9,38 @@ import { ThemeToggle } from "./ThemeToggle";
 export function Nav() {
   const { data: session, status } = useSession();
   const [pendingCount, setPendingCount] = useState(0);
+  const [picksOpenStage, setPicksOpenStage] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
-  // Lightweight pending-request poll. Fetches /api/friends on session-ready
-  // and every 60s thereafter so the dot updates without a page reload.
-  // Paused while the tab is hidden.
+  // Lightweight poll for both:
+  //   1. incoming friend requests (dot on avatar)
+  //   2. open stage with no picks submitted (dot on "My Pickems")
+  // Runs together every 60s so we make one network sweep, not two.
   useEffect(() => {
     if (status !== "authenticated") {
       setPendingCount(0);
+      setPicksOpenStage(null);
       return;
     }
     let cancelled = false;
     const tick = async () => {
       if (typeof document !== "undefined" && document.hidden) return;
       try {
-        const res = await fetch("/api/friends", { cache: "no-store" });
-        if (!res.ok) return;
-        const json = await res.json();
-        if (!cancelled) setPendingCount((json.pendingIn ?? []).length);
+        const [friendsRes, picksRes] = await Promise.all([
+          fetch("/api/friends", { cache: "no-store" }),
+          fetch("/api/pickems/status", { cache: "no-store" }),
+        ]);
+        if (friendsRes.ok) {
+          const json = await friendsRes.json();
+          if (!cancelled) setPendingCount((json.pendingIn ?? []).length);
+        }
+        if (picksRes.ok) {
+          const json = await picksRes.json();
+          if (!cancelled) {
+            setPicksOpenStage(json.needsPicks ? (json.stage as string) : null);
+          }
+        }
       } catch {
         // network blip — ignore, next tick will retry
       }
@@ -74,7 +87,19 @@ export function Nav() {
         </Link>
         <div className="flex flex-1 gap-4 text-sm text-muted">
           <Link href="/bracket" className="hover:text-text">Bracket</Link>
-          <Link href="/pickems" className="hover:text-text">My Pickems</Link>
+          <Link
+            href="/pickems"
+            className="relative hover:text-text"
+            title={picksOpenStage ? `${picksOpenStage} open — submit your picks` : undefined}
+          >
+            My Pickems
+            {picksOpenStage && (
+              <span
+                aria-label={`${picksOpenStage} open — picks needed`}
+                className="absolute -right-2 -top-1 h-2 w-2 animate-pulse rounded-full bg-accent"
+              />
+            )}
+          </Link>
           <Link href="/leaderboard" className="hover:text-text">Leaderboard</Link>
         </div>
         {session?.user ? (

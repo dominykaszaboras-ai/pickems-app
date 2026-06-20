@@ -4,6 +4,7 @@ import type { ClientMatch, ClientTournament } from "@/lib/types";
 import { TeamLogo } from "./TeamLogo";
 import { formatMatchTime } from "@/lib/formatTime";
 import { resolveWatchLinks } from "@/lib/streams";
+import { Countdown } from "./Countdown";
 
 export function MatchCard({
   match,
@@ -72,7 +73,14 @@ export function MatchCard({
             {match.swissRound != null ? ` · R${match.swissRound}` : ""}
           </span>
           {match.status === "PENDING" && match.startTime && (
-            <span className="text-text">· {formatMatchTime(match.startTime)}</span>
+            <span className="text-text">
+              · {formatMatchTime(match.startTime)}
+              {soonish(match.startTime) && (
+                <span className="ml-1 text-accent">
+                  · <Countdown iso={match.startTime} />
+                </span>
+              )}
+            </span>
           )}
         </span>
         <span className="flex items-center gap-2">
@@ -105,6 +113,14 @@ export function MatchCard({
       {pickRow(b, match.scoreB)}
     </div>
   );
+}
+
+// True when a PENDING match starts within the next 6 hours — only then do
+// we surface the live countdown next to the absolute time. Beyond that the
+// "today HH:mm" / "tomorrow HH:mm" label conveys enough on its own.
+function soonish(iso: string): boolean {
+  const diffMs = new Date(iso).getTime() - Date.now();
+  return diffMs > 0 && diffMs < 6 * 60 * 60 * 1000;
 }
 
 // Compact pair of Twitch / YouTube link buttons. Hidden when neither layer

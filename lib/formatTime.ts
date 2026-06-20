@@ -42,6 +42,27 @@ function absoluteTime(d: Date): string {
   });
 }
 
+// Short countdown formatter ("in 3s", "in 12m", "in 1h 23m", "in 2d 4h").
+// Used by MatchCard to show when a PENDING match is about to start.
+// `nowMs` is injectable so a single tick state can re-render multiple
+// cards without each one calling Date.now() independently.
+export function formatCountdown(iso: string | null, nowMs: number = Date.now()): string {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+  const diffSec = Math.floor((then - nowMs) / 1000);
+  if (diffSec <= 0) return "starting now";
+  if (diffSec < 60) return `in ${diffSec}s`;
+  const min = Math.floor(diffSec / 60);
+  if (min < 60) return `in ${min}m`;
+  const h = Math.floor(min / 60);
+  const remMin = min % 60;
+  if (h < 24) return remMin ? `in ${h}h ${remMin}m` : `in ${h}h`;
+  const d = Math.floor(h / 24);
+  const remH = h % 24;
+  return remH ? `in ${d}d ${remH}h` : `in ${d}d`;
+}
+
 // Short relative-past formatter ("3s ago", "12m ago", "2h ago", "5d ago").
 // Used by the Sync button to show how long ago the last sync finished.
 // `nowMs` is injectable so callers (clients with a tick state) can produce

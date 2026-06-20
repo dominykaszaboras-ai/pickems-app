@@ -1,11 +1,33 @@
 import "./globals.css";
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Providers } from "./providers";
 import { Nav } from "@/components/Nav";
 
 export const metadata: Metadata = {
   title: "CS2 Major Pickems",
   description: "Predict CS2 Major outcomes, simulate the bracket, and track your pickems score in real time.",
+  manifest: "/manifest.webmanifest",
+  applicationName: "CS2 Pickems",
+  appleWebApp: {
+    capable: true,
+    title: "CS2 Pickems",
+    statusBarStyle: "black-translucent",
+  },
+  formatDetection: {
+    telephone: false,
+  },
+};
+
+// Mobile viewport + status-bar tint. theme_color drives Android Chrome's
+// URL-bar tint and the splash screen on Android PWAs.
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f6f7fa" },
+    { media: "(prefers-color-scheme: dark)", color: "#0b0d12" },
+  ],
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 // Runs before React hydrates so the correct theme class is on <html> on the

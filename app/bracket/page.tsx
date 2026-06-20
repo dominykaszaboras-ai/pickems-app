@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { getActiveTournament, getUserPickem } from "@/lib/queries";
 import { BracketView } from "@/components/BracketView";
+import { FriendsPicksProvider } from "@/components/FriendsPicksProvider";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,7 +25,9 @@ export default async function BracketPage() {
 
   return (
     <main className="mx-auto max-w-6xl p-4">
-      <BracketView tournament={tournament} myPickem={myPickem} />
+      <FriendsPicksProvider>
+        <BracketView tournament={tournament} myPickem={myPickem} />
+      </FriendsPicksProvider>
     </main>
   );
 }

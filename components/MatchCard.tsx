@@ -5,6 +5,8 @@ import { TeamLogo } from "./TeamLogo";
 import { formatMatchTime } from "@/lib/formatTime";
 import { resolveWatchLinks } from "@/lib/streams";
 import { Countdown } from "./Countdown";
+import { FriendsPickedBadge } from "./FriendsPickedBadge";
+import { MatchDetails } from "./MatchDetails";
 
 export function MatchCard({
   match,
@@ -28,6 +30,10 @@ export function MatchCard({
   const b = match.teamB;
   const isOverridden = match.status !== "FINISHED" && effectiveWinnerId !== null;
 
+  // Swiss matches don't carry a bracketRound. FriendsPickedBadge uses this
+  // to decide which pick kinds to surface.
+  const matchIsSwiss = match.bracketRound == null;
+
   function pickRow(team: typeof a, score: number) {
     const isWinner = effectiveWinnerId !== null && team?.id === effectiveWinnerId;
     const isLoser = effectiveWinnerId !== null && team && team.id !== effectiveWinnerId;
@@ -50,6 +56,13 @@ export function MatchCard({
           <span className="rounded bg-accent/20 px-1.5 text-[10px] font-semibold uppercase text-accent">
             {pickHints[team.id]}
           </span>
+        )}
+        {team && (
+          <FriendsPickedBadge
+            teamId={team.id}
+            matchRound={match.bracketRound}
+            matchIsSwiss={matchIsSwiss}
+          />
         )}
         <span className="w-5 text-right font-mono text-sm">{score}</span>
       </button>
@@ -111,6 +124,7 @@ export function MatchCard({
       </div>
       {pickRow(a, match.scoreA)}
       {pickRow(b, match.scoreB)}
+      {match.status === "FINISHED" && <MatchDetails hltvId={match.hltvId} />}
     </div>
   );
 }

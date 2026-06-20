@@ -70,9 +70,15 @@ export function PlayoffBracket({
     return { qfs: qfsRaw, sfs: sfsRaw, finalMatch: finalRaw };
   }, [stage]);
 
-  // For each QF, resolve the team that should advance to its SF slot —
-  // either the real FINISHED winner, or a user-simulated override.
+  // For each match, resolve the team that should advance to its next-round
+  // slot — either the real FINISHED winner, or a user-simulated override.
   // Returns null if the match is still LIVE/PENDING with no override.
+  //
+  // We intentionally do NOT fall back to "user's pick for this round" — the
+  // /bracket page is the LIVE view, not a prediction projection. Showing a
+  // user's Final pick in the Final cell before the SF has even played is
+  // confusing. Predicted bracket paths live on /pickems (the picker) and
+  // can also be summoned here by clicking through the simulator.
   function advancingTeamId(m: ClientMatch | null): string | null {
     if (!m) return null;
     if (overrides[m.id] !== undefined) return overrides[m.id];
@@ -86,47 +92,19 @@ export function PlayoffBracket({
     return m;
   }, [stage.teams]);
 
-  // Index the viewer's playoff picks by round so we can use them as
-  // fallback "ghost" teams in SF/Final cells when the feeder match
-  // hasn't decided yet. This is purely visual — the actual scoring still
-  // gates on `advancingTeamId` (real winner OR sim override).
-  const playoffPicksByRound = useMemo(() => {
-    const map = new Map<number, Set<string>>();
-    for (const p of pickem?.picks ?? []) {
-      if (p.kind !== "PLAYOFF_WINNER" || p.round == null) continue;
-      if (!map.has(p.round)) map.set(p.round, new Set());
-      map.get(p.round)!.add(p.teamId);
-    }
-    return map;
-  }, [pickem]);
-
-  // The user's pick for a given feeder match: which of the two teams in
-  // `feeder` did they pick to win round `round`? Returns null if none.
-  function userPickForFeeder(feeder: ClientMatch | null, round: number): string | null {
-    if (!feeder) return null;
-    const picks = playoffPicksByRound.get(round);
-    if (!picks) return null;
-    if (feeder.teamA && picks.has(feeder.teamA.id)) return feeder.teamA.id;
-    if (feeder.teamB && picks.has(feeder.teamB.id)) return feeder.teamB.id;
-    return null;
-  }
-
-  // Compute derived SF/Final pairings from feeder winners. We construct a
-  // "shadow" match object that mirrors the stored SF row but with teamA/teamB
-  // taken from the feeders. When the feeder is still undecided we fall
-  // back to the user's pick so the bracket renders their predicted path —
-  // the pickHints layer below will tag it with WIN/CHAMP.
-  // Identity (match.id) stays the same so MatchCard simulation overrides
-  // still key correctly.
+  // Build a "shadow" match for SF/Final that mirrors the stored row's
+  // identity (so MatchCard sim overrides still key correctly) but takes
+  // its teamA/teamB from the feeders' winners. When a feeder is still
+  // undecided, the corresponding slot stays null and the slot renders as
+  // a "TBD" placeholder.
   function shadowedRound(
     self: ClientMatch | null,
     feederA: ClientMatch | null,
     feederB: ClientMatch | null,
-    feederRound: number,
   ): ClientMatch | null {
     if (!self) return null;
-    const aId = advancingTeamId(feederA) ?? userPickForFeeder(feederA, feederRound);
-    const bId = advancingTeamId(feederB) ?? userPickForFeeder(feederB, feederRound);
+    const aId = advancingTeamId(feederA);
+    const bId = advancingTeamId(feederB);
     return {
       ...self,
       teamA: aId ? teamsById.get(aId) ?? null : null,
@@ -134,9 +112,9 @@ export function PlayoffBracket({
     };
   }
 
-  const sf1 = shadowedRound(sfs[0], qfs[0], qfs[1], 1);
-  const sf2 = shadowedRound(sfs[1], qfs[2], qfs[3], 1);
-  const finalShadow = shadowedRound(finalMatch, sf1, sf2, 2);
+  const sf1 = shadowedRound(sfs[0], qfs[0], qfs[1]);
+  const sf2 = shadowedRound(sfs[1], qfs[2], qfs[3]);
+  const finalShadow = shadowedRound(finalMatch, sf1, sf2);
 
   const hintByRound: Record<number, Record<string, string | undefined>> = useMemo(() => {
     const out: Record<number, Record<string, string | undefined>> = {};
@@ -241,6 +219,29 @@ export function PlayoffBracket({
   );
 }
 
+// Pre-computed connector geometry. All percentages off the same total grid
+// width (QF + gap + SF + gap + Final). Plucked out of BracketConnectors so
+// they're calculated once at module load rather than on every render.
+const CONNECTOR_GEOM = (() => {
+  const totalW = COLUMN_WIDTHS.qf + COLUMN_GAP + COLUMN_WIDTHS.sf + COLUMN_GAP + COLUMN_WIDTHS.final;
+  const qfRight = (COLUMN_WIDTHS.qf / totalW) * 100;
+  const sfLeft = ((COLUMN_WIDTHS.qf + COLUMN_GAP) / totalW) * 100;
+  const sfRight = ((COLUMN_WIDTHS.qf + COLUMN_GAP + COLUMN_WIDTHS.sf) / totalW) * 100;
+  const finalLeft = ((COLUMN_WIDTHS.qf + COLUMN_GAP + COLUMN_WIDTHS.sf + COLUMN_GAP) / totalW) * 100;
+  return {
+    qfRight,
+    sfLeft,
+    sfRight,
+    finalLeft,
+    qfSfMid: (qfRight + sfLeft) / 2,
+    sfFinalMid: (sfRight + finalLeft) / 2,
+    // QF rows centered at 12.5/37.5/62.5/87.5%, SFs at 25/75%, Final at 50%.
+    qfYs: [12.5, 37.5, 62.5, 87.5] as const,
+    sfYs: [25, 75] as const,
+    finalY: 50,
+  };
+})();
+
 // SVG overlay that draws the Liquipedia-style connector lines between
 // QF→SF and SF→Final. Positioned absolute over the grid; pointer-events
 // off so it doesn't intercept clicks on the match cards underneath.
@@ -249,25 +250,7 @@ export function PlayoffBracket({
 // scale with the grid. `vectorEffect="non-scaling-stroke"` keeps the
 // stroke 1px regardless of scaling.
 function BracketConnectors() {
-  // Horizontal anchors expressed as a fraction of the grid width.
-  // (Must stay in sync with COLUMN_WIDTHS + COLUMN_GAP above.)
-  const totalW = COLUMN_WIDTHS.qf + COLUMN_GAP + COLUMN_WIDTHS.sf + COLUMN_GAP + COLUMN_WIDTHS.final;
-  const qfRight = (COLUMN_WIDTHS.qf / totalW) * 100;
-  const sfLeft = ((COLUMN_WIDTHS.qf + COLUMN_GAP) / totalW) * 100;
-  const sfRight = ((COLUMN_WIDTHS.qf + COLUMN_GAP + COLUMN_WIDTHS.sf) / totalW) * 100;
-  const finalLeft = ((COLUMN_WIDTHS.qf + COLUMN_GAP + COLUMN_WIDTHS.sf + COLUMN_GAP) / totalW) * 100;
-  const qfSfMid = (qfRight + sfLeft) / 2;
-  const sfFinalMid = (sfRight + finalLeft) / 2;
-
-  // Vertical anchors: QF rows centered at 12.5/37.5/62.5/87.5%, SFs at
-  // 25/75%, Final at 50%.
-  const qfYs = [12.5, 37.5, 62.5, 87.5];
-  const sfYs = [25, 75];
-  const finalY = 50;
-
-  const stroke = "currentColor";
-  const sw = 1;
-
+  const { qfRight, sfLeft, sfRight, finalLeft, qfSfMid, sfFinalMid, qfYs, sfYs, finalY } = CONNECTOR_GEOM;
   return (
     <svg
       aria-hidden
@@ -281,19 +264,19 @@ function BracketConnectors() {
         const bottomQf = qfYs[sfIdx * 2 + 1];
         return (
           <g key={`qf-sf-${sfIdx}`}>
-            <line x1={qfRight} y1={topQf} x2={qfSfMid} y2={topQf} stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" />
-            <line x1={qfRight} y1={bottomQf} x2={qfSfMid} y2={bottomQf} stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" />
-            <line x1={qfSfMid} y1={topQf} x2={qfSfMid} y2={bottomQf} stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" />
-            <line x1={qfSfMid} y1={sfY} x2={sfLeft} y2={sfY} stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" />
+            <line x1={qfRight} y1={topQf} x2={qfSfMid} y2={topQf} stroke="currentColor" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+            <line x1={qfRight} y1={bottomQf} x2={qfSfMid} y2={bottomQf} stroke="currentColor" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+            <line x1={qfSfMid} y1={topQf} x2={qfSfMid} y2={bottomQf} stroke="currentColor" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+            <line x1={qfSfMid} y1={sfY} x2={sfLeft} y2={sfY} stroke="currentColor" strokeWidth={1} vectorEffect="non-scaling-stroke" />
           </g>
         );
       })}
       {/* SF → Final */}
       <g>
-        <line x1={sfRight} y1={sfYs[0]} x2={sfFinalMid} y2={sfYs[0]} stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" />
-        <line x1={sfRight} y1={sfYs[1]} x2={sfFinalMid} y2={sfYs[1]} stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" />
-        <line x1={sfFinalMid} y1={sfYs[0]} x2={sfFinalMid} y2={sfYs[1]} stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" />
-        <line x1={sfFinalMid} y1={finalY} x2={finalLeft} y2={finalY} stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" />
+        <line x1={sfRight} y1={sfYs[0]} x2={sfFinalMid} y2={sfYs[0]} stroke="currentColor" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+        <line x1={sfRight} y1={sfYs[1]} x2={sfFinalMid} y2={sfYs[1]} stroke="currentColor" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+        <line x1={sfFinalMid} y1={sfYs[0]} x2={sfFinalMid} y2={sfYs[1]} stroke="currentColor" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+        <line x1={sfFinalMid} y1={finalY} x2={finalLeft} y2={finalY} stroke="currentColor" strokeWidth={1} vectorEffect="non-scaling-stroke" />
       </g>
     </svg>
   );

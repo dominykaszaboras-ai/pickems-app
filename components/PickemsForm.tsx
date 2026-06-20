@@ -103,6 +103,14 @@ export function PickemsForm({
     window.localStorage.setItem("pickems:syncToSteam", String(syncToSteam));
   }, [syncToSteam]);
 
+  // Correctness lookup for the saved pickem (no overrides — we want the
+  // real outcome state to drive the picker's lock + tint UI). Memoed so
+  // we don't reparse on every keystroke in the Swiss pickers.
+  const savedPickResults = useMemo(
+    () => (initial ? scorePickem(tournament, initial, {}).pickResults : []),
+    [tournament, initial],
+  );
+
   const allPicks: ClientPickemPick[] = useMemo(() => {
     const out: ClientPickemPick[] = [];
     for (const stageKind of SWISS_STAGE_KINDS) {
@@ -182,14 +190,7 @@ export function PickemsForm({
           playoffMatches={playoffMatches}
           picks={playoffs}
           setPicks={setPlayoffs}
-          // Pass the *saved* pickem (`initial`) — we want correctness based
-          // on what's been actually submitted, not the in-progress edits.
-          // Re-scores cheaply on every render but the input is small.
-          pickResults={
-            initial
-              ? scorePickem(tournament, initial, {}).pickResults
-              : []
-          }
+          pickResults={savedPickResults}
         />
       ) : (
         <LockedStage title="Playoffs" reason={lockedReason.PLAYOFFS} />

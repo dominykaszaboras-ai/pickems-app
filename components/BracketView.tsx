@@ -53,16 +53,28 @@ export function BracketView({
   // shown a toast for so re-renders don't re-toast — and so a match
   // flipping FINISHED→LIVE doesn't repeatedly nag (rare but happens with
   // overtime corrections). The toast offers "Watch live" which scrolls
-  // the live stream embed into view + opens the per-stage section.
+  // the live stream embed into view.
+  //
+  // IMPORTANT: pre-seed the seen-set with matches that were ALREADY LIVE
+  // on first paint. Otherwise a user landing on /bracket during an
+  // in-progress match would be told the match "just went LIVE" — annoying
+  // and incorrect. Only true PENDING/FINISHED → LIVE transitions should
+  // toast.
   const [newlyLive, setNewlyLive] = useState<string[]>([]);
-  const seenLiveRef = useRef<Set<string>>(new Set());
+  const seenLiveRef = useRef<Set<string> | null>(null);
   useEffect(() => {
     const currentlyLive = tournament.stages.flatMap((s) =>
       s.matches.filter((m) => m.status === "LIVE").map((m) => m.id),
     );
-    const fresh = currentlyLive.filter((id) => !seenLiveRef.current.has(id));
+    if (seenLiveRef.current === null) {
+      // First-render init: everything currently live is already-seen, so
+      // we don't toast retroactively.
+      seenLiveRef.current = new Set(currentlyLive);
+      return;
+    }
+    const fresh = currentlyLive.filter((id) => !seenLiveRef.current!.has(id));
     if (fresh.length === 0) return;
-    fresh.forEach((id) => seenLiveRef.current.add(id));
+    fresh.forEach((id) => seenLiveRef.current!.add(id));
     setNewlyLive((prev) => [...prev, ...fresh]);
     // Auto-dismiss after 12s.
     const t = setTimeout(() => {

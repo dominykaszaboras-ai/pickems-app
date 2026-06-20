@@ -241,12 +241,20 @@ export async function syncTournament(
       }
     }
 
+    // IMPORTANT: the update clause intentionally OMITS stageId,
+    // bracketRound, and bracketSlot. HLTV's per-match label is unreliable
+    // (the Cologne 2026 event 8301 hosts both Stage 3 and Playoffs under
+    // the same event id and provides no per-match playoff signal), so
+    // letting every sync re-stamp the stage based on the force-tagged
+    // stageKind would drag manually-placed playoff matches back to
+    // STAGE_3 on every cron. Once a match is placed (whether by ghost
+    // adoption, the create-path here, or an operator script), its
+    // bracket position is locked. Scores, status, winner, teams, and
+    // startTime still update normally.
     await prisma.match.upsert({
       where: { hltvId: m.hltvId },
       update: {
-        stageId: stageIdByKind[stageKind],
         swissRound: m.swissRound ?? undefined,
-        bracketRound: m.bracketRound ?? undefined,
         teamAId,
         teamBId,
         scoreA: m.scoreA,

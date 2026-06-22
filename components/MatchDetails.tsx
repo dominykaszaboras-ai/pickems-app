@@ -26,6 +26,9 @@ interface H2HEntry {
   winnerWasB: boolean;
   tournament: string;
   stage: string;
+  // "local" for entries from our DB (always have stage), "hltv" for the
+  // broader 1-year archive pulled from HLTV.getResults (no stage).
+  source?: "local" | "hltv";
 }
 
 interface MatchDetailsPayload {
@@ -162,8 +165,16 @@ function H2HList({ data }: { data: MatchDetailsPayload }) {
             key={`${h.hltvId ?? "g"}-${i}`}
             className="flex items-center justify-between gap-2 rounded px-1 py-0.5"
           >
-            <span className="truncate text-muted">
-              {h.tournament} · {h.stage}
+            <span className="flex min-w-0 flex-1 items-center gap-1.5 text-muted">
+              <span className="truncate">
+                {h.tournament}
+                {h.stage ? ` · ${h.stage}` : ""}
+              </span>
+              {h.startTime && (
+                <span className="shrink-0 font-mono text-[9px] opacity-60">
+                  {new Date(h.startTime).toLocaleDateString(undefined, { month: "short", year: "2-digit" })}
+                </span>
+              )}
             </span>
             <span className="font-mono tabular-nums">
               <span className={clsx(h.winnerWasA && "text-win", h.winnerWasB && "text-loss")}>

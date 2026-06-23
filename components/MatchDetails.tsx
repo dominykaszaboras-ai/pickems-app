@@ -28,7 +28,7 @@ interface H2HEntry {
   stage: string;
   // "local" for entries from our DB (always have stage), "hltv" for the
   // broader 1-year archive pulled from HLTV.getResults (no stage).
-  source?: "local" | "hltv";
+  source?: "local" | "liquipedia" | "hltv";
 }
 
 interface MatchDetailsPayload {

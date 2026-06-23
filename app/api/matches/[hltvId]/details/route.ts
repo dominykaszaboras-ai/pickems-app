@@ -1,20 +1,21 @@
 // On-demand match detail endpoint: maps played + recent head-to-head.
 //
-// Two data sources for H2H:
-//   1. Our own DB — fast, but only knows tournaments we've synced.
-//   2. HLTV.getResults filtered by teamIds + a 1-year window — gives a
-//      broader picture for teams that have a long shared history.
+// H2H source chain (each step's results merged into the next):
+//   1. Local DB — fast, but only knows tournaments we've synced.
+//   2. Liquipedia per-team /Matches subpage — accessible from Railway
+//      (HLTV is blocked by Cloudflare from our datacenter IP). This is
+//      the primary fallback in production.
+//   3. HLTV.getResults filtered by teamIds — works locally + from GH
+//      Actions, may fail from Railway. Tried last as a best-effort.
 //
-// We merge both, dedupe by HLTV id, and return the most recent 10. The
-// HLTV path is cached in-process per (teamA, teamB) pair for an hour so
-// repeated expands across multiple cards don't hammer HLTV.
+// Each source caches separately; merged + deduped + capped at 10.
 //
-// Maps for the specific match also come from HLTV.getMatch, cached for
-// 5 min so rapid expand/collapse cycles don't re-fetch.
+// Maps for the specific match also come from HLTV.getMatch (cached 5 min).
 
 import { NextResponse } from "next/server";
 import HLTV from "hltv";
 import { prisma } from "@/lib/db";
+import { fetchLiquipediaH2H } from "@/lib/h2hLiquipedia";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,7 +36,7 @@ interface H2HEntry {
   winnerWasB: boolean;
   tournament: string;
   stage: string;
-  source: "local" | "hltv";
+  source: "local" | "liquipedia" | "hltv";
 }
 
 interface MapsCacheEntry {
@@ -172,10 +173,10 @@ export async function GET(
     },
   });
 
-  // Run map fetch + local H2H + HLTV H2H in parallel.
-  const [maps, localH2H, hltvH2H] = await Promise.all([
+  // Run map fetch + all three H2H sources in parallel.
+  const [maps, localH2H, liquipediaH2H, hltvH2H] = await Promise.all([
     getMapsFromHltv(hltvId),
-    // Local DB: matches we've already synced for these two teams.
+    // Source 1 — local DB.
     (async (): Promise<H2HEntry[]> => {
       if (!dbMatch?.teamAId || !dbMatch?.teamBId) return [];
       const matches = await prisma.match.findMany({
@@ -212,9 +213,25 @@ export async function GET(
         source: "local" as const,
       }));
     })(),
-    // HLTV archive over the past year — only attempt when both team HLTV
-    // ids are known. Names also passed so we can match against older
-    // HLTV results entries that dropped team ids.
+    // Source 2 — Liquipedia /Matches subpage of teamA. Most reliable
+    // path from Railway since HLTV is firewalled here.
+    (async (): Promise<H2HEntry[]> => {
+      if (!dbMatch?.teamA?.name || !dbMatch?.teamB?.name) return [];
+      const rows = await fetchLiquipediaH2H(dbMatch.teamA.name, dbMatch.teamB.name);
+      return rows.map((r) => ({
+        hltvId: r.hltvId,
+        startTime: r.startTime,
+        scoreForA: r.scoreForA,
+        scoreForB: r.scoreForB,
+        winnerWasA: r.winnerWasA,
+        winnerWasB: r.winnerWasB,
+        tournament: r.tournament,
+        stage: "",
+        source: "liquipedia" as const,
+      }));
+    })(),
+    // Source 3 — HLTV.getResults (1yr window). Best-effort; may be
+    // blocked from Railway. Local + Liquipedia cover the gap.
     (async (): Promise<H2HEntry[]> => {
       const aId = dbMatch?.teamA?.hltvId;
       const bId = dbMatch?.teamB?.hltvId;
@@ -223,11 +240,14 @@ export async function GET(
     })(),
   ]);
 
-  // Merge local + HLTV, dedupe by hltvId (a sync'd match can appear in
-  // both lists), sort by startTime desc, cap at 10.
+  // Merge all three, dedupe by hltvId when present (Liquipedia entries
+  // don't have one — they dedupe by startTime+tournament). Sort newest
+  // first, cap at 10.
   const merged = new Map<string, H2HEntry>();
-  for (const e of [...localH2H, ...hltvH2H]) {
-    const key = e.hltvId ? `id:${e.hltvId}` : `t:${e.startTime}|${e.tournament}`;
+  for (const e of [...localH2H, ...liquipediaH2H, ...hltvH2H]) {
+    const key = e.hltvId
+      ? `id:${e.hltvId}`
+      : `t:${e.startTime?.slice(0, 10) ?? ""}|${e.tournament}`;
     if (!merged.has(key)) merged.set(key, e);
   }
   const h2h = [...merged.values()]

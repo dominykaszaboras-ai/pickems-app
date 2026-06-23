@@ -4,29 +4,32 @@
 
 ## What this is
 
-CS2 Major Pickems site. Click-to-simulate bracket, automatic HLTV
-sync, multi-user accounts (Steam OpenID + email/password), per-stage
-pickems with live scoring, majors.im-style pool view, live match
-tracking, projected next-stage previews.
+CS2 Major Pickems site. Read-only live bracket with auto-progression,
+HLTV+Liquipedia sync, **Steam-only auth**, per-stage pickems with live
+scoring + colour-coded correctness on the picker, majors.im-style pool
+view, live match tracking, projected next-stage previews, friend graph,
+medals, head-to-head match history, installable as a mobile PWA, and
+light/dark theme.
 
 Currently tracking **IEM Cologne Major 2026**.
 
 - GitHub: `dominykaszaboras-ai/pickems-app`
 - Prod: <https://pickems-app-production.up.railway.app>
 - Railway project: `stellar-wonder` (service `pickems-app` + Postgres plugin)
-- Owner: `dominykaszaboras@gmail.com`
+- Owner: `dominykaszaboras@gmail.com` (Steam-only account, formerly also had an email row that was deleted 2026-06-21)
 
 ## Stack
 
 | | |
 |--|--|
 | Framework | Next.js **14.2.35** (App Router, TypeScript) |
-| Styling   | Tailwind |
+| Styling   | Tailwind — colour tokens are CSS variables backed by `:root` (dark) + `html.light` palettes; toggle via `components/ThemeToggle.tsx`; anti-FOUC init in `app/layout.tsx` |
 | DB        | Prisma **5.22.0** + PostgreSQL (Railway plugin) |
-| Auth      | NextAuth v5 (`5.0.0-beta.31`) — credentials + Steam OpenID |
-| Scraping  | `hltv` npm package |
+| Auth      | NextAuth v5 (`5.0.0-beta.31`) — **Steam OpenID only** (email/password removed 2026-06-21) |
+| Scraping  | `hltv` npm package + raw fetch against Liquipedia MediaWiki `parse` API |
 | Cron      | GitHub Actions (Vercel Cron NOT used — `vercel.json` was deleted) |
 | Host      | Railway (Vercel docs in README are historical) |
+| PWA       | `app/manifest.ts` (Next.js metadata route) + `app/apple-icon.tsx` (180×180 iOS home-screen icon). Installable from Android Chrome ("Install app") + iOS Safari ("Add to Home Screen"). `display: standalone`, `start_url: /bracket`, themeColor varies by `prefers-color-scheme`. |
 
 **DO NOT bump Prisma to 7.x** — P7 forbids `datasource.url` in schema
 and requires a driver adapter; not worth the migration. We tried, reverted.
@@ -41,11 +44,9 @@ app/
       [...nextauth]/route.ts     NextAuth route handler
       steam/route.ts             Step 1 of Steam OpenID dance
       steam/callback/route.ts    Step 2 of Steam OpenID dance
-      steam/link/route.ts        Step 1 of Steam LINK flow (session-gated)
-      steam/link/callback/route.ts Step 2 of Steam LINK flow — updates existing user
-      steam/unlink/route.ts      POST: detach Steam from current user (needs email+password fallback)
+      (link/ + unlink/ DELETED 2026-06-21 — email auth removed)
     pickems/sync-steam/route.ts  POST: paste Major Auth Code -> Valve API -> raw JSON saved on User
-    signup/route.ts              Credentials signup
+    pickems/status/route.ts      GET: needsPicks signal for the Nav indicator (returns {needsPicks, stage})
     sync/route.ts                Cron-protected full sync (CRON_SECRET)
     last-sync/route.ts           Polling endpoint for refresh detection
     refresh/route.ts             POST -> dispatches GH Actions workflow
@@ -54,35 +55,52 @@ app/
     friends/request/route.ts     POST send friend request
     friends/respond/route.ts     POST accept/decline incoming request
     friends/[id]/route.ts        DELETE unfriend / cancel outgoing request
+    friends/picks/route.ts       GET friends' picks for active tournament, indexed by teamId (30s cache)
     users/search/route.ts        GET search users by name (signed-in only, 3-char min)
-  auth/signin|signup/page.tsx
-  bracket/page.tsx               Bracket + simulator + status + projection
-  pickems/page.tsx               Pickem submission form
+    matches/[hltvId]/details/route.ts  GET maps (HLTV.getMatch) + H2H (local DB + Liquipedia + HLTV.getResults). 5min maps cache, 1h H2H cache per pair.
+    (signup/route.ts DELETED 2026-06-21 — email auth removed)
+  auth/signin/page.tsx           Steam-only Sign-in page (no email form)
+  (auth/signup/page.tsx DELETED 2026-06-21)
+  bracket/page.tsx               Bracket + status + projection + FriendsPicksProvider wrapper
+  pickems/page.tsx               PickemsForm only — picks + correctness coloring live IN the form's PlayoffBracketPicker
   leaderboard/page.tsx           Everyone's scores + Friends-only toggle (?friends=1)
   friends/page.tsx               Friend management (search, pending, accepted)
   users/[id]/page.tsx            Public profile: score + per-stage picks (stage-locked)
-  icon.tsx                       Trophy 🏆 favicon (Next.js App Router ImageResponse)
+  icon.tsx                       Trophy 🏆 favicon (Next.js App Router ImageResponse, 32×32)
+  apple-icon.tsx                 180×180 iOS home-screen icon (solid panel bg)
+  manifest.ts                    Web App Manifest — name/short_name/display/start_url/icons
   page.tsx, layout.tsx, providers.tsx, globals.css
 
+  layout.tsx                     Inline init script sets html.light|dark before React hydrates (no FOUC).
+                                 Exports metadata + viewport (themeColor per-scheme, viewportFit=cover).
+  globals.css                    Defines --c-* CSS vars (RGB triplets) for both themes; tailwind colors
+                                 resolve via rgb(var(--c-x) / <alpha-value>) so opacity modifiers work.
+
 components/
-  Nav.tsx                        Top nav; avatar click → dropdown (My profile/Friends/Sign out)
-  BracketView.tsx                Top-level interactive view (stages in descending order)
+  Nav.tsx                        Top nav; avatar dropdown (My profile/Friends/Sign out). Polls /api/friends + /api/pickems/status every 60s — shows accent dot on "My Pickems" when needsPicks, badge on avatar for pending friend requests. Includes ThemeToggle. Sign-in cluster = single "Sign in with Steam" pill.
+  BracketView.tsx                Top-level view. Sticky score header (top-12, backdrop-blur). Auto-refresh polls /api/last-sync every 30s while any match is LIVE. "Match just went LIVE" toast pre-seeds seen-set on first paint so it only fires on real PENDING/FINISHED→LIVE transitions. Wraps children in FriendsPicksProvider.
   TournamentStatus.tsx           Per-stage status banner (Swiss-aware concluded check)
-  UpcomingSchedule.tsx           Next ~36h of pending matches (TW/YT watch buttons)
-  LiveStreamEmbed.tsx            Twitch iframe at top of /bracket when ANY match is LIVE
+  UpcomingSchedule.tsx           Next ~36h of pending matches. Hides rows where BOTH teams are null (bracket placeholders).
+  LiveStreamEmbed.tsx            Twitch iframe at top of /bracket. Hardened against stale LIVE rows: requires startTime within now-6h..now+30min OR (no startTime AND hltvId set).
   StageProjection.tsx            Stage 3 preview when Stage 2 is done
-  SwissStage.tsx                 Single Swiss stage (Rounds | Pools toggle, hidden by default)
+  SwissStage.tsx                 Single Swiss stage (Rounds | Pools toggle, hidden by default). Still has simulator (click-to-pick) on swiss matches.
   SwissPoolView.tsx              majors.im-style W-L pool layout
-  PlayoffBracket.tsx             Playoff bracket (display + simulator on /bracket)
-  PlayoffBracketPicker.tsx       Click-to-advance bracket UI on /pickems form (4 QF -> 2 SF -> 1 Final + Champion)\n  PlayoffPickBracket.tsx         Read-only mini bracket shown inside PickSummary when stage.kind === \"PLAYOFFS\"
-  MatchCard.tsx                  Single match (click to simulate, HLTV ↗, TW/YT)
-  PickSummary.tsx                User's picks with correctness per stage
-  PickemsForm.tsx                Pick submission UI (locks unstarted stages)
+  PlayoffBracket.tsx             Read-only mini bracket on /bracket. CSS-grid layout (4 rows: QF 1/row, SF 2/row centered, Final 4/row). Shadow-row derives SF/Final teams from stored teamA/teamB if set, else from feeder winners. **No simulator on playoffs.** Connector SVG lines REMOVED (percentage math couldn't track the 16px row gap cleanly).
+  PlayoffBracketPicker.tsx       Click-to-advance bracket UI on /pickems form (4 QF -> 2 SF -> 1 Final + Champion). LOCKED rows (FINISHED matches) disable click; user's pick gets tinted green (✓ won) / red (✗ busted). No more "QF=1pt, SF=2pts…" text.
+  PlayoffPickBracket.tsx         Read-only mini bracket shown inside PickSummary when stage.kind === "PLAYOFFS" (only used on /users/[id] now; /pickems uses the picker for picks+correctness in one)
+  MatchCard.tsx                  Single match. Twitch/YouTube SVG glyph buttons (replaced TW/YT text). Inline <Countdown> next to time when match starts within 6h. <FriendsPickedBadge> stacked-avatar pill per team row. <MatchDetails> expandable strip under FINISHED matches (maps + H2H).
+  Countdown.tsx                  Self-ticking countdown label. Smart interval (1s under a minute, 10s under an hour, 30s otherwise). Pauses on document.hidden.
+  ThemeToggle.tsx                Sun/moon icon button. Reads current html class on mount (no SSR/hydration mismatch), toggles, persists to localStorage.
+  FriendsPicksProvider.tsx       Context + fetcher for /api/friends/picks. Single fetch per page load + on tab-focus.
+  FriendsPickedBadge.tsx         Stacked avatars (max 3 + "+N") on each team row; hover/tap opens popover with friend names + pick-kind tags. Renders as <span role="button"> to avoid nested-button in the team-row button.
+  MatchDetails.tsx               Click-to-expand strip under FINISHED MatchCards. Lazy-fetches /api/matches/[hltvId]/details on first expand; subsequent toggles use the cached payload. Shows maps + H2H sections.
+  PickSummary.tsx                User's picks with correctness per stage (used on /users/[id])
+  PickemsForm.tsx                Pick submission UI. Memo'd scorePickem(initial) once per render; passed as pickResults to the picker for tint/lock.
   TeamLogo.tsx                   Team logo with name fallback
   RefreshButton.tsx              Triggers GH Actions sync; idle label = "Synced Xs ago"
   FriendsView.tsx                Client component for /friends (search + list + actions)
   FriendButton.tsx               Add/accept/decline/unfriend button on /users/[id]
-  SteamLinkPanel.tsx             Link/Unlink Steam panel shown on the viewer's own profile
+  (SteamLinkPanel.tsx DELETED 2026-06-21 — link/unlink removed with email auth)
   SteamSyncCard.tsx              Paste Major Auth Code on /pickems (only when user has steamId)
   SteamCodePanel.tsx             Profile-page version of the auth-code form (paste/refresh/clear from /users/[id])
   MedalBadge.tsx                 Bronze/silver/gold/diamond medal coin next to score on profile + leaderboard
@@ -91,17 +109,19 @@ lib/
   db.ts                          Prisma singleton
   medals.ts                      Medal tiers + getMedal() (1-5 bronze, 6-15 silver, 16-25 gold, 26+ diamond)
   types.ts                       Shared types + STAGE_LABEL + SWISS_STAGE_KINDS
-  auth.ts                        NextAuth config (credentials + steam provider, login rate-limit)
+  auth.ts                        NextAuth config — STEAM-ONLY (Credentials email/password provider removed 2026-06-21 along with bcryptjs + rateLimit imports)
   steam.ts                       OpenID redirect/verify + return_to host check + signed-fields check
   steamPickems.ts                ICSGOTournaments_730 wrapper: layout + predictions + raw-shape extractor
-  hltv.ts                        HLTV scraper wrapper (normalizers, getMatch, getTeam)
-  liquipedia.ts                  MediaWiki API client: schedule + broadcast channels + team-name normalizer
+  hltv.ts                        HLTV scraper wrapper. fetchStageMatches takes options.disambiguatePlayoffs (label-based override when an event id is shared with the umbrella).
+  liquipedia.ts                  MediaWiki API client. getLiquipediaUmbrella() + getLiquipediaStageMap() read LIQUIPEDIA_TOURNAMENT_BASE env (fallback = Cologne 2026). Legacy COLOGNE_2026_* exports kept for back-compat.
+  h2hLiquipedia.ts               H2H fetcher via Liquipedia /Team_X/Matches subpage. Resolves slug from common patterns (Team_X, X, X_Esports, X_Gaming) + redirects=1. Parses match rows for opponent. In-process cache per sorted normalised pair, TTL 1h. **Primary H2H source from Railway since HLTV is firewalled.**
+  bracket.ts                     progressPlayoffBracket(tournamentId): ensures SF1/SF2/Final placeholder rows exist once 4 QFs are in DB; fills next-round teamA/teamB from feeder winners when feeder is FINISHED. Idempotent. Called at the end of syncTournament + syncLiveMatches.
   streams.ts                     resolveWatchLinks() (per-match override → tournament default) + twitchEmbedSrc()
   rateLimit.ts                   In-memory limiter + clientIp + isSameOrigin (CSRF gate)
-  sync.ts                        syncTournament + syncLiveMatches + parseStageEvents + ghost adoption
+  sync.ts                        syncTournament + syncLiveMatches + parseStageEvents. **Update clause omits stageId / bracketRound / bracketSlot** — once a match is placed, its bracket position is locked. Ghost adoption is cross-stage (scopes by tournamentId + team pair) and handles hltvId-conflict by deleting the conflicting force-tagged duplicate then re-adopting the ghost. Both sync entry-points call progressPlayoffBracket at the end.
   queries.ts                     Server-side data fetching for client types
   scoring.ts                     Pure pickem scoring engine
-  formatTime.ts                  Relative + absolute time formatting; exports formatAgo()
+  formatTime.ts                  Relative + absolute time formatting; exports formatAgo() + formatCountdown()
   friends.ts                     loadFriendGraph / statusOf / loadUserSummaries (server helpers)
 
 prisma/
@@ -115,7 +135,9 @@ prisma/
 scripts/
   sync.ts                        Full sync runner (npm run sync, 10min cron)
   live-sync.ts                   Live-only fast sync (npm run live-sync, 2min cron)
-  sync-schedule.ts               Daily Liquipedia schedule + broadcast sync (npm run sync-schedule)
+  sync-schedule.ts               Daily Liquipedia schedule + broadcast sync. Calls getLiquipediaStageMap() / getLiquipediaUmbrella() so env changes take effect. GC only removes FUTURE ghosts (15-min grace) — past PENDING rows are kept so HLTV can adopt them.
+  setup-tournament.ts            One-shot bootstrap for a NEW tournament. Reads HLTV_EVENT_ID + HLTV_STAGE_EVENTS + LIQUIPEDIA_TOURNAMENT_BASE + optional STEAM_PICKEM_EVENT_ID from env. Runs syncTournament → Liquipedia schedule pass → progressPlayoffBracket. Idempotent.
+  fix-playoff-stage.ts           One-off cleanup (kept around). Moves misfiled STAGE_3 rows to PLAYOFFS by --hltvIds=A,B,C or by team-pair + --afterDate=YYYY-MM-DD heuristic. Default dry-run; --apply to mutate.
   probe-event.ts                 Diagnostic: HLTV event ID discovery (ids/find/scan/stage modes)
   probe-liquipedia.ts            Diagnostic: dry-run Liquipedia parser (parse/raw/snippet modes)
   probe-steam-pickem.ts          Diagnostic: enumerate Valve pickem event IDs via GetTournamentLayout/v1 (no DB; needs STEAM_API_KEY)
@@ -210,8 +232,8 @@ Cologne 2026 splits SOME stages into their own HLTV event; Stage 3 lives on the 
 | Umbrella (teams, dates, name) | `8301` | The /events/8301/... URL on HLTV |
 | Stage 1 | `9028` | Concluded |
 | Stage 2 | `9029` | Concluded |
-| Stage 3 | `8301` | **No separate sub-event — matches live directly on the umbrella.** `fetchStageMatches(8301, STAGE_3)` filters by event.id; Stage 1/2 matches live under 9028/9029 so there's no overlap. |
-| Playoffs | **Liquipedia-only** (no HLTV stage id) | HLTV bundles playoffs under the same umbrella id (8301) as Stage 3, and `fetchStageMatches` only filters by event id (then force-tags `stageKind`), so adding `PLAYOFFS:8301` would double-write every match. Playoff bracket data is pulled exclusively from Liquipedia via `fetchSchedule(COLOGNE_2026_LIQUIPEDIA)` — the `PLAYOFFS` entry there points to `Intel_Extreme_Masters/2026/Cologne/Playoffs`. Verified working: parser returns all 4 QFs (2026-06-18). Live scores still adopt from HLTV via ghost-matching by team+time. |
+| Stage 3 | `8301` | No separate sub-event — matches live directly on the umbrella. `fetchStageMatches(8301, STAGE_3)` filters by event.id; Stage 1/2 matches live under 9028/9029 so there's no overlap. |
+| Playoffs | (Liquipedia for seed teams; HLTV for results) | HLTV bundles playoffs under the same umbrella id (8301) as Stage 3 and provides no per-match playoff signal. We DO have PLAYOFFS as a real stage now with 4 QFs + 2 SFs + 1 GF rows (placed via Liquipedia ghost rows or `scripts/fix-playoff-stage.ts`). Once placed, `lib/sync.ts` does NOT overwrite stageId/bracketRound/bracketSlot on update, so the placement sticks. HLTV results flow into those rows via cross-stage ghost adoption (matches `(teamA, teamB)` regardless of stage). The widened ghost adoption also handles hltvId-conflict by deleting the force-tagged STAGE_3 duplicate. **Auto-progression** (`lib/bracket.ts`) creates SF/Final placeholders + fills teamA/teamB from feeder winners on every sync. |
 
 `HLTV_EVENT_ID` env var holds the umbrella. `HLTV_STAGE_EVENTS` is a
 comma-separated `KIND:ID` map parsed by `lib/sync.ts:parseStageEvents`.
@@ -219,6 +241,28 @@ comma-separated `KIND:ID` map parsed by `lib/sync.ts:parseStageEvents`.
 **Discovery tool**: when a new stage's HLTV event ID is unknown, use
 `scripts/probe-event.ts` (modes: `ids`, `find`, `scan`, `stage`) to
 verify before wiring it into env vars.
+
+## Rolling a new tournament (drop-in workflow)
+
+Four env vars + one script. See `scripts/setup-tournament.ts` for details.
+
+| Var | Example |
+|-----|---------|
+| `HLTV_EVENT_ID` | `8500` (umbrella) |
+| `HLTV_STAGE_EVENTS` | `STAGE_1:9100,STAGE_2:9101,STAGE_3:9102` |
+| `LIQUIPEDIA_TOURNAMENT_BASE` | `BLAST/Major/Berlin_2026` (no trailing slash) |
+| `STEAM_PICKEM_EVENT_ID` | `27` (probe via `scripts/probe-steam-pickem.ts`) |
+
+Then:
+
+```bash
+DATABASE_URL=... npx tsx scripts/setup-tournament.ts
+```
+
+Bootstrap is idempotent. After this the regular GH-Actions crons take
+over: full sync every 10min, live-sync every 2min, daily Liquipedia
+schedule at 05:30 UTC, Steam pickem every 6h. Auto-progression fills
+SF/Final from feeder winners on every sync pass.
 
 ## Env vars (Railway service `pickems-app`)
 
@@ -230,12 +274,18 @@ verify before wiring it into env vars.
 | `CRON_SECRET` | Protects `/api/sync` (Bearer auth) |
 | `GITHUB_TOKEN` | Server uses this to dispatch GH Actions sync workflow on Refresh button click |
 | `HLTV_EVENT_ID` | `8301` (umbrella) |
-| `HLTV_STAGE_EVENTS` | `STAGE_1:9028,STAGE_2:9029,STAGE_3:8301` (extend with `PLAYOFFS:<id>` when announced) |
+| `HLTV_STAGE_EVENTS` | `STAGE_1:9028,STAGE_2:9029,STAGE_3:8301` (don't add PLAYOFFS:8301 — would re-tag everything; use auto-progression instead) |
+| `LIQUIPEDIA_TOURNAMENT_BASE` | `Intel_Extreme_Masters/2026/Cologne` — base wiki path, stage slugs derived as `BASE/Stage_N` and `BASE/Playoffs`. Defaults to Cologne 2026 if unset. |
+| `STEAM_API_KEY` | Server-side only. Used by `ICSGOTournaments_730` calls. |
+| `STEAM_PICKEM_EVENT_ID` | `26` for Cologne 2026 (probe via `scripts/probe-steam-pickem.ts`). |
 
 GitHub repo secrets (for workflows):
 - `DATABASE_URL` (public Postgres proxy URL, `acela.proxy.rlwy.net:46540`)
 - `HLTV_EVENT_ID`
 - `HLTV_STAGE_EVENTS`
+- `LIQUIPEDIA_TOURNAMENT_BASE`
+- `STEAM_API_KEY`
+- `STEAM_PICKEM_EVENT_ID`
 
 **STEAM_API_KEY is now set** (as of 2026-06-16) to enable Major pickem
 auto-import via `ICSGOTournaments_730/GetTournamentPredictions`. The
@@ -272,7 +322,7 @@ user's per-Major "Major Auth Code").
    Don't add a normalizer that expects `team1.id`. Identify by name. `lib/sync.ts:ensureTeamByName` is the chokepoint.
 2. **HLTV blocks Railway datacenter IPs via Cloudflare** ("Access denied"
    500). Syncing from Railway always fails. Use GH Actions (Azure IPs)
-   for crons. Manual local syncs work from residential IPs.
+   for crons. Manual local syncs work from residential IPs. **`lib/h2hLiquipedia.ts` exists specifically because of this** — the on-demand H2H panel can't rely on HLTV calls from our Next.js runtime; Liquipedia is the primary source there.
 3. **`HLTV.getEvent` is the most-blocked endpoint**. `lib/hltv.ts:fetchEventSnapshot` wraps it in `safe()` — keep it that way so one
    blocked call doesn't abort the full sync.
 4. **Stage names in DB diverged from new naming**. Always read display
@@ -298,6 +348,13 @@ user's per-Major "Major Auth Code").
 10. **Session JWT is cached** — `lib/auth.ts:session` callback re-reads
     `name` and `image` from DB on every check so existing JWTs pick up
     DB updates without forcing sign-out + sign-in.
+11. **`lib/sync.ts` upsert update clause OMITS stageId / bracketRound / bracketSlot**. HLTV's labels for Cologne 2026 carry no playoff signal (`inferStageKind` returns null), so every sync would re-stamp playoff matches as STAGE_3 if we let the upsert touch stageId. The clause now only writes scores/status/winner/teams/swissRound/startTime on update; bracket placement is set on CREATE and locked thereafter. Restoring this is how today's QFs/SFs stay in PLAYOFFS across cron passes.
+12. **Ghost adoption can hit P2002 on hltvId** when a force-tagged STAGE_3 duplicate already owns the id (created on an earlier sync before our manual placement existed). The fix in `lib/sync.ts` catches `code === "P2002"`, deletes the conflicting row, and re-runs the ghost adoption — the manually-placed PLAYOFFS row wins because it's in the correct stage. Without this, the sync crashes with a Prisma error and `progressPlayoffBracket` never runs that pass.
+13. **Liquipedia API requires gzip encoding** — every fetch must send `Accept-Encoding: gzip` or you get HTTP 406. Both `lib/liquipedia.ts` and `lib/h2hLiquipedia.ts` set this header. Their UA also has to identify us with a contact URL per Liquipedia's terms.
+14. **Tailwind colour tokens are CSS variables now** — `bg-panel`, `text-loss` etc. resolve to `rgb(var(--c-x) / <alpha-value>)`. Adding a new colour requires both a `tailwind.config.ts` mapping AND a `--c-<name>` var pair in `app/globals.css` for both `:root` (dark) and `html.light` blocks. Don't hardcode hex values in components — they won't theme.
+15. **Anti-FOUC for theme** — `app/layout.tsx` injects a tiny init script in `<head>` that reads localStorage / `prefers-color-scheme` and adds `light`/`dark` class to `<html>` BEFORE React hydrates. The `<html suppressHydrationWarning>` attribute is required to silence Next.js complaints about that class being absent server-side.
+16. **`/bracket` PLAYOFF view is read-only — no simulator.** Click-to-pick is intentionally removed there. Predicted bracket paths live on `/pickems` via the `PlayoffBracketPicker`. Swiss matches still allow simulation via `SwissStage` (the override system in `BracketView` is still wired for them).
+17. **Auto-progression assumes 8-team single-elim** (4 QF / 2 SF / 1 GF). If a tournament uses a different bracket format (16-team, double-elim), `lib/bracket.ts:progressPlayoffBracket` needs a different mapping. Bo3 SF / Bo5 GF defaults match every recent Major; override via DB if a Major uses Bo5 SF.
 
 ## Data source split (HLTV vs Liquipedia)
 
@@ -312,18 +369,23 @@ syncs so we don't lose properties of one for the other.
 | Teams / general tournament metadata | HLTV (umbrella event) | Sufficient and already wired. |
 | Main broadcast channels (Twitch / YouTube) | **Liquipedia** umbrella event | Lives in the external-links sidebar; HLTV exposes it only on individual match pages we can't reach. |
 | Per-match stream override | Liquipedia (best-effort) | Rarely populated; renderer falls back to tournament default. |
+| Per-match maps (post-match) | HLTV `getMatch.maps` | Only HLTV publishes structured per-map scores. Called on-demand from `/api/matches/[hltvId]/details`, 5-min in-process cache. May fail from Railway (Cloudflare); returns `[]` silently. |
+| Head-to-head history | **Liquipedia** primary + HLTV fallback | `lib/h2hLiquipedia.ts` scrapes the `/Team_X/Matches` subpage for opponent rows. HLTV.getResults stays in the chain as best-effort but is firewalled from Railway, so Liquipedia is what the user actually sees in prod. |
 
-If the Liquipedia tournament moves (new Major), update
-`COLOGNE_2026_LIQUIPEDIA` and `COLOGNE_2026_LIQUIPEDIA_UMBRELLA` in
-`lib/liquipedia.ts` alongside the HLTV event IDs.
+If the Liquipedia tournament moves (new Major), set
+`LIQUIPEDIA_TOURNAMENT_BASE` env var (e.g. `BLAST/Major/Berlin_2026`).
+`lib/liquipedia.ts:getLiquipediaUmbrella()` reads it at function-call
+time (not module-load) so scripts that call `loadEnvConfig()` before
+import work fine.
 
 ## Cron architecture
 
 | Workflow | Cadence | What it does |
 |---|---|---|
-| `sync.yml` | every 10 min | Full sync: umbrella event + per-stage events. Discovers new matches, teams, schedule. Also performs **ghost adoption** — claims Liquipedia-sourced PENDING rows by stamping the now-known `hltvId` on them. |
-| `live-sync.yml` | every 2 min | `syncLiveMatches()` — only touches matches currently LIVE or PENDING within ±30 min. Updates scoreA/scoreB/status/winner via `HLTV.getMatch(id)`. |
-| `sync-schedule.yml` | daily @ 05:30 UTC | Pulls per-stage match schedules + main broadcast channels from Liquipedia. Writes PENDING rows with `hltvId=null` that the regular sync adopts later. |
+| `sync.yml` | every 10 min | Full sync: umbrella event + per-stage events. Discovers new matches, teams, schedule. **Ghost adoption** claims Liquipedia-sourced PENDING rows across stages by stamping the now-known `hltvId` on them (handles P2002 conflict by deleting the force-tagged duplicate). **`progressPlayoffBracket`** runs at the end — ensures SF/Final placeholders + fills teamA/teamB from feeder winners. |
+| `live-sync.yml` | every 2 min | `syncLiveMatches()` — only touches matches currently LIVE or PENDING within ±30 min. Updates scoreA/scoreB/status/winner via `HLTV.getMatch(id)`. Also calls `progressPlayoffBracket` for every tournament it touched, so a QF flipping to FINISHED triggers SF teamA/teamB fill on the same tick. |
+| `sync-schedule.yml` | daily @ 05:30 UTC | Pulls per-stage match schedules + main broadcast channels from Liquipedia. Writes PENDING rows with `hltvId=null` that the regular sync adopts later. **GC only deletes FUTURE ghosts** (15-min grace) — past PENDING rows are kept because they may be in-flight matches awaiting HLTV adoption. |
+| `steam-pickem-sync.yml` | every 6h | Bidirectional Steam pickem sync per user with a Major Auth Code. |
 
 Browser auto-refresh on `/bracket`: if any match in DOM has `status:"LIVE"`,
 BracketView polls `/api/last-sync` every 30s and calls `router.refresh()`
@@ -399,10 +461,30 @@ railway variables --kv | grep KEY
 - **Use `STAGE_LABEL[kind]`** for any stage heading in UI. Never `stage.name`.
 - **Use `ensureTeamByName`** for teams from HLTV. Never `ensureTeam(hltvId)`.
 
+## Recent session changes (2026-06-20 → 2026-06-23)
+
+Big push, multiple features + bug fixes. Highlights:
+
+- [x] **Steam-only auth** (2026-06-21). Email signup + signin + the Steam link/unlink flow all removed. `lib/auth.ts` retains only the `id="steam"` Credentials provider. `User.email` + `User.passwordHash` columns stay nullable in schema (no migration) so we can re-add email later without DB work. The lingering email account `dominykaszaboras@gmail.com` was deleted from prod DB; picks live solely on the Steam "Excellence." row.
+- [x] **Light/dark theme** (2026-06-20). CSS-variable colour tokens in `tailwind.config.ts` (`rgb(var(--c-x) / <alpha-value>)`); `:root` (dark) + `html.light` palettes in `globals.css`. `components/ThemeToggle.tsx` button in Nav, persists to localStorage, respects `prefers-color-scheme`. Anti-FOUC init script in `app/layout.tsx` head. Light palette tuned warm-grey (~#eaedf4) per user feedback that pure white was harsh.
+- [x] **PWA installable** (2026-06-20). `app/manifest.ts` (Next.js metadata route) + `app/apple-icon.tsx` (180×180). `app/layout.tsx` sets `appleWebApp.capable=true` + per-scheme `themeColor`. Verified install flow on Android Chrome + iOS Safari "Add to Home Screen".
+- [x] **Match details popover** (2026-06-20 / 2026-06-22). `/api/matches/[hltvId]/details` returns maps + 1-year H2H. `components/MatchDetails.tsx` is a click-to-expand strip under FINISHED MatchCards. H2H source chain: local DB → `lib/h2hLiquipedia.ts` (`/Team_X/Matches` subpage scraper, primary in prod because Railway is firewalled from HLTV) → HLTV.getResults (best-effort). Tournament name parser now correctly handles multi-segment Liquipedia slugs like `Intel_Extreme_Masters/2026/Cologne`.
+- [x] **Friends' picks badge on each team row** (2026-06-20). `/api/friends/picks` returns viewer's accepted friends' picks indexed by teamId (30s cache). `components/FriendsPicksProvider.tsx` context + `components/FriendsPickedBadge.tsx` stacked avatars + popover. Renders as `<span role="button">` to avoid nested-button HTML inside the team-row `<button>`.
+- [x] **Bracket UX polish** (2026-06-20). Sticky score header, "Match just went LIVE" toast that pre-seeds seen-set on first paint, time-until-start countdown next to PENDING matches that start within 6h, pulsing accent dot on "My Pickems" via new `/api/pickems/status` endpoint. UpcomingSchedule hides rows where both teams are null (fully-TBD bracket placeholders).
+- [x] **Twitch / YouTube SVG glyphs** (2026-06-20). Replaced `TW` / `YT` text buttons in `components/MatchCard.tsx` with inline brand-tinted SVG icons.
+- [x] **Playoff bracket auto-progression** (2026-06-21). New `lib/bracket.ts:progressPlayoffBracket(tournamentId)`. Ensures SF1/SF2/Final placeholder rows exist once 4 QFs are in DB; fills next-round teamA/teamB from feeder winners when feeder is FINISHED. Idempotent. Hooked into the end of `syncTournament` + `syncLiveMatches` so it runs on every cron pass. Eliminates the manual DB edits previously needed when a QF concluded.
+- [x] **`/bracket` read-only on playoffs** (2026-06-21). Removed simulator clicks from `PlayoffBracket`. Simulator still works for Swiss in `SwissStage`. SVG connector lines removed (percentage math couldn't track the 16px row gap accurately); bracket reads fine without them.
+- [x] **`/pickems` PlayoffBracketPicker shows correctness** (2026-06-20). PickemsForm passes `pickResults` from `scorePickem(initial, {})` into the picker. Once a QF/SF/Final FINISHES, that row LOCKS (click disabled, `aria-disabled` set) and the user's pick gets tinted green (✓ won) or red (✗ busted). Removed the "QF = 1 pt, SF = 2 pts…" text line.
+- [x] **lib/sync.ts stage-lock + dupe resolution** (2026-06-21). `update` clause omits stageId / bracketRound / bracketSlot so HLTV's force-tagging can't drag manually-placed playoff matches back to STAGE_3. Ghost adoption widened to scope by (tournamentId, team pair) instead of (stageId, team pair) — if it hits a P2002 hltvId conflict, deletes the conflicting force-tagged row and re-adopts the ghost.
+- [x] **Liquipedia slugs env-driven** (2026-06-20). New `LIQUIPEDIA_TOURNAMENT_BASE` env var. `lib/liquipedia.ts:getLiquipediaUmbrella()` + `getLiquipediaStageMap()` helpers; legacy `COLOGNE_2026_LIQUIPEDIA*` exports kept for back-compat. Scripts (sync-schedule, probe) call the helpers so env values resolve at function-call time.
+- [x] **`scripts/setup-tournament.ts` bootstrap** (2026-06-21). One-shot: HLTV syncTournament → Liquipedia schedule pass → progressPlayoffBracket. Reads HLTV_EVENT_ID + HLTV_STAGE_EVENTS + LIQUIPEDIA_TOURNAMENT_BASE + optional STEAM_PICKEM_EVENT_ID from env. Idempotent.
+- [x] **`scripts/fix-playoff-stage.ts` manual cleanup** (2026-06-20). Kept around in repo. Moves misfiled STAGE_3 rows to PLAYOFFS by --hltvIds= or --afterDate= heuristic. Dry-run default; --apply to mutate.
+- [x] **LiveStreamEmbed hardened against stale LIVE rows** (2026-06-20). Requires `startTime` within `now-6h..now+30min` OR (no startTime AND hltvId set). Stops the Twitch embed staying up indefinitely when a Liquipedia ghost is manually flagged LIVE.
+
 ## Active todos / followups
 
-- [x] **Playoffs sourced from Liquipedia** (2026-06-16). HLTV doesn't separate playoffs from Stage 3 (both at event 8301) and `fetchStageMatches` would double-write — so `PLAYOFFS` is NOT in `HLTV_STAGE_EVENTS` anymore (reverted to `STAGE_1:9028,STAGE_2:9029,STAGE_3:8301` on both GH secret + Railway env). `COLOGNE_2026_LIQUIPEDIA.PLAYOFFS` already points at the right wiki page; the existing `parseLiquipediaMatches` parser handles the playoff bracket HTML and returns all 4 QFs. Live scores still adopt from HLTV via ghost-matching by team+time.
-- [ ] **Owner: update `HLTV_STAGE_EVENTS` on Railway** to `STAGE_1:9028,STAGE_2:9029,STAGE_3:8301`. Cron runs from GH Actions so syncs work today; the Railway env only matters for `/api/sync` direct calls (Refresh button still dispatches GH).
+- [ ] **Owner: ensure Railway env has `LIQUIPEDIA_TOURNAMENT_BASE`** set to `Intel_Extreme_Masters/2026/Cologne`. Falls back to hardcoded default if unset, so non-blocking. Required for any non-Cologne tournament.
+- [ ] **Owner: confirm `HLTV_STAGE_EVENTS` on Railway** is `STAGE_1:9028,STAGE_2:9029,STAGE_3:8301`. Cron runs from GH Actions so syncs work today; Railway env only matters for `/api/sync` direct calls.
 - [x] **Rotated Postgres password** (2026-06-14). Regenerated `POSTGRES_PASSWORD` via Railway's variable generator → Railway re-ALTERed the DB user + rebuilt templated `DATABASE_URL` / `DATABASE_PUBLIC_URL` → `pickems-app` redeployed via the `${{Postgres.DATABASE_URL}}` reference. GH Actions `DATABASE_URL` secret updated via `gh secret set`. All three sync workflows verified green afterward.
 - [x] **In-app friend system** (2026-06-15). Search-and-add friends by display name (no Steam API). `/friends` management page, `/users/[id]` profile with per-stage pick lock, leaderboard Friends-only toggle, avatar dropdown in Nav. See Data model + Security posture sections for full detail.
 - [x] **Steam linking on existing accounts** (2026-06-16). New `/api/auth/steam/link` + `/api/auth/steam/link/callback` routes let a signed-in email user attach a SteamID without creating a fresh row. `/api/auth/steam/unlink` POST detaches, but refuses if the user has no email+passwordHash fallback (would lock themselves out). UI lives in `SteamLinkPanel` on the viewer's own profile page. Conflict cases handled: already-yours, already-linked-to-current-user, SteamID owned by another user (P2002).
@@ -434,8 +516,10 @@ Layered protections live in:
 
 - `lib/rateLimit.ts` — in-memory limiter + `clientIp(req)` + `isSameOrigin(req)` (same-origin gate for state-changing POSTs).
 - `app/api/sync/route.ts` — `CRON_SECRET` check via `timingSafeEqual`; **fails closed** when the env var is missing.
-- `app/api/signup/route.ts` — `isSameOrigin` gate + 5 signups / hour / IP.
 - `app/api/pickems/route.ts` — `isSameOrigin` gate + session auth + `teamId` validated against `TournamentTeam`.
+- `app/api/pickems/status/route.ts` — session auth; returns only a boolean + stage label.
+- `app/api/friends/picks/route.ts` — session auth + 30s cache-control. Only returns viewer's accepted-friend picks.
+- `app/api/matches/[hltvId]/details/route.ts` — no auth (public match data); 60s cache-control.
 - `app/api/refresh/route.ts` — `isSameOrigin` gate + session auth + per-user throttle (6/min) + global 20s dispatch throttle.
 - `app/api/friends/*` + `app/api/users/search` — all session + `isSameOrigin` gated. Request: 30/h/user. Search: 30/min/user. `/request` catches P2002/P2003 (race + FK) so it never leaks user existence. `/respond` + `/[id]` catch P2025 so concurrent deletes return ok instead of 500. Unordered-pair unique index (see Data model) prevents two-PENDING-row race at the DB layer.
 - `lib/auth.ts` — credentials `authorize` is rate-limited per email (10 attempts / 15 min) to make online brute force impractical.
@@ -474,3 +558,23 @@ If you ever scale beyond a single Railway replica, move the in-memory limiter + 
 - Don't bake stream channel handles into client code — pull from
   `Tournament.twitchChannel` / `youtubeChannel`; that's how Major changes
   with new broadcasters auto-propagate after the next daily sync.
+- Don't add `stageId`, `bracketRound`, or `bracketSlot` back to the
+  `update` clause of the `prisma.match.upsert` call in `lib/sync.ts`.
+  Every HLTV sync would re-stamp force-tagged playoff matches as STAGE_3,
+  silently undoing all manual + auto-progression placement. Those three
+  fields belong on CREATE only.
+- Don't add email/password auth back without also wiring `/auth/signup`
+  + `/api/signup` + the link/unlink routes you'd need for account
+  merging — and update `lib/auth.ts` Credentials provider. Schema fields
+  are already nullable; the wiring is the work.
+- Don't re-introduce HLTV calls from the Next.js runtime for the H2H
+  panel without checking that Cloudflare actually allows them through
+  from Railway. Use `lib/h2hLiquipedia.ts` as primary — it's the only
+  H2H source that reliably works in production.
+- Don't hardcode colour hex values in components. All themed colours
+  must use the tailwind tokens (`bg-panel`, `text-loss`, etc.) which
+  resolve to CSS variables. Brand colours (Twitch purple, YouTube red)
+  are the only acceptable hardcoded hexes.
+- Don't loosen `progressPlayoffBracket`'s "only fill null slots" guard.
+  It's what keeps manually-corrected team placements from being
+  overwritten on the next sync pass.
